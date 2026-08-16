@@ -7,6 +7,7 @@ import {
   Activity, 
 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip } from 'recharts';
+import { DataTransparencyBanner } from '../components/DataTransparencyBanner';
 
 export const SimulationCenter: React.FC = () => {
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
@@ -100,6 +101,9 @@ export const SimulationCenter: React.FC = () => {
 
   return (
     <div className="space-y-6 relative">
+      {/* Data Transparency Banner */}
+      <DataTransparencyBanner context="simulation" isDismissible />
+
       {/* Visual Flash Alert overlay when threshold is breached */}
       {flashAlert && (
         <div className="absolute inset-0 bg-accent-red bg-opacity-[0.06] border-2 border-accent-red border-opacity-40 rounded pointer-events-none z-10 transition-all duration-100 animate-pulse"></div>
@@ -131,6 +135,7 @@ export const SimulationCenter: React.FC = () => {
               onClick={() => setIsPlaying(false)}
               className="p-3 bg-dark-bg hover:bg-dark-elevated border border-dark-border text-accent-amber rounded transition"
               title="Pause Simulation"
+              aria-label="Pause simulation"
             >
               <Pause size={16} fill="currentColor" />
             </button>
@@ -139,6 +144,7 @@ export const SimulationCenter: React.FC = () => {
               onClick={() => setIsPlaying(true)}
               className="p-3 bg-accent-amber text-dark-bg rounded transition hover:bg-opacity-95 shadow-md shadow-accent-amber shadow-opacity-10"
               title="Play Simulation"
+              aria-label="Play simulation"
             >
               <Play size={16} fill="currentColor" />
             </button>
@@ -148,6 +154,7 @@ export const SimulationCenter: React.FC = () => {
             onClick={handleReset}
             className="p-3 bg-dark-bg hover:bg-dark-elevated border border-dark-border text-text-secondary hover:text-text-primary rounded transition"
             title="Reset Stream"
+            aria-label="Reset simulation stream"
           >
             <RotateCcw size={16} />
           </button>
@@ -165,6 +172,8 @@ export const SimulationCenter: React.FC = () => {
               <button
                 key={s}
                 onClick={() => setSpeed(s)}
+                aria-label={`Set playback speed to ${s}x`}
+                aria-pressed={speed === s}
                 className={`px-3 py-1 text-xs font-mono font-bold rounded transition ${
                   speed === s 
                     ? 'bg-dark-elevated text-accent-amber' 
@@ -183,6 +192,7 @@ export const SimulationCenter: React.FC = () => {
           <select
             value={selectedAsset}
             onChange={(e) => setSelectedAsset(e.target.value)}
+            aria-label="Select telemetry target asset"
             className="bg-dark-bg border border-dark-border text-xs text-text-primary px-3 py-1.5 rounded outline-none font-mono focus:border-accent-amber cursor-pointer"
           >
             {mockAssets.map(a => (

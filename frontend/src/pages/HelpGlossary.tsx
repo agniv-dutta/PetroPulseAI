@@ -133,6 +133,7 @@ export const HelpGlossary: React.FC = () => {
                 placeholder="Search petroleum or machine learning terms..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
+                aria-label="Search glossary terms"
                 className="bg-transparent text-xs text-text-primary placeholder-text-secondary outline-none w-full font-sans"
               />
             </div>

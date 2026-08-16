@@ -34,6 +34,7 @@ export const SystemStatusBar: React.FC = () => {
         <input 
           type="text" 
           placeholder="Search telemetry, assets, or reports..." 
+          aria-label="Global search"
           className="bg-transparent text-xs text-text-primary placeholder-text-secondary outline-none w-full font-sans"
         />
       </div>
@@ -59,7 +60,10 @@ export const SystemStatusBar: React.FC = () => {
 
       {/* Profile & Notifications */}
       <div className="flex items-center gap-4">
-        <button className="text-text-secondary hover:text-text-primary relative p-1.5 bg-dark-bg border border-dark-border rounded hover:border-accent-amber transition">
+        <button
+          aria-label="Notifications"
+          className="text-text-secondary hover:text-text-primary relative p-1.5 bg-dark-bg border border-dark-border rounded hover:border-accent-amber transition"
+        >
           <Bell size={16} />
           <span className="absolute top-1 right-1 w-2 h-2 bg-accent-red rounded-full"></span>
         </button>

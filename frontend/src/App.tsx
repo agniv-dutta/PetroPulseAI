@@ -1,21 +1,34 @@
+import { lazy, Suspense } from 'react';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { DashboardLayout } from './components/DashboardLayout';
 import { LandingPage } from './pages/LandingPage';
-import { Dashboard } from './pages/Dashboard';
-import { AssetLeaderboard } from './pages/AssetLeaderboard';
-import { AssetDetail } from './pages/AssetDetail';
-import { ForecastingCanvas } from './pages/ForecastingCanvas';
-import { AnomalyDetectionCenter } from './pages/AnomalyDetectionCenter';
-import { DeviationAttribution } from './pages/DeviationAttribution';
-import { RootCauseAnalysis } from './pages/RootCauseAnalysis';
-import { InterventionPriority } from './pages/InterventionPriority';
-import { RecoveryWhatIf } from './pages/RecoveryWhatIf';
-import { SimulationCenter } from './pages/SimulationCenter';
-import { ScenarioInjection } from './pages/ScenarioInjection';
-import { ModelStatus } from './pages/ModelStatus';
-import { DataProvenance } from './pages/DataProvenance';
-import { HelpGlossary } from './pages/HelpGlossary';
-import { ForecastDetailsPlaceholder } from './pages/PlaceholderPages';
+
+// Code-split route-level chunks to reduce initial bundle size
+const Dashboard = lazy(() => import('./pages/Dashboard').then(m => ({ default: m.Dashboard })));
+const AssetLeaderboard = lazy(() => import('./pages/AssetLeaderboard').then(m => ({ default: m.AssetLeaderboard })));
+const AssetDetail = lazy(() => import('./pages/AssetDetail').then(m => ({ default: m.AssetDetail })));
+const ForecastingCanvas = lazy(() => import('./pages/ForecastingCanvas').then(m => ({ default: m.ForecastingCanvas })));
+const ForecastDetailsPlaceholder = lazy(() => import('./pages/PlaceholderPages').then(m => ({ default: m.ForecastDetailsPlaceholder })));
+const AnomalyDetectionCenter = lazy(() => import('./pages/AnomalyDetectionCenter').then(m => ({ default: m.AnomalyDetectionCenter })));
+const DeviationAttribution = lazy(() => import('./pages/DeviationAttribution').then(m => ({ default: m.DeviationAttribution })));
+const RootCauseAnalysis = lazy(() => import('./pages/RootCauseAnalysis').then(m => ({ default: m.RootCauseAnalysis })));
+const InterventionPriority = lazy(() => import('./pages/InterventionPriority').then(m => ({ default: m.InterventionPriority })));
+const RecoveryWhatIf = lazy(() => import('./pages/RecoveryWhatIf').then(m => ({ default: m.RecoveryWhatIf })));
+const SimulationCenter = lazy(() => import('./pages/SimulationCenter').then(m => ({ default: m.SimulationCenter })));
+const ScenarioInjection = lazy(() => import('./pages/ScenarioInjection').then(m => ({ default: m.ScenarioInjection })));
+const ModelStatus = lazy(() => import('./pages/ModelStatus').then(m => ({ default: m.ModelStatus })));
+const DataProvenance = lazy(() => import('./pages/DataProvenance').then(m => ({ default: m.DataProvenance })));
+const HelpGlossary = lazy(() => import('./pages/HelpGlossary').then(m => ({ default: m.HelpGlossary })));
+
+function PageFallback() {
+  return (
+    <div style={{ minHeight: '60vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div style={{ color: '#B8B3A8', fontFamily: "'IBM Plex Mono', monospace", fontSize: '12px', letterSpacing: '0.05em' }}>
+        LOADING...
+      </div>
+    </div>
+  );
+}
 
 function App() {
   return (
@@ -29,7 +42,9 @@ function App() {
           path="/dashboard"
           element={
             <DashboardLayout>
-              <Dashboard />
+              <Suspense fallback={<PageFallback />}>
+                <Dashboard />
+              </Suspense>
             </DashboardLayout>
           }
         />
@@ -37,7 +52,9 @@ function App() {
           path="/assets/leaderboard"
           element={
             <DashboardLayout>
-              <AssetLeaderboard />
+              <Suspense fallback={<PageFallback />}>
+                <AssetLeaderboard />
+              </Suspense>
             </DashboardLayout>
           }
         />
@@ -45,7 +62,9 @@ function App() {
           path="/assets/detail/:assetId"
           element={
             <DashboardLayout>
-              <AssetDetail />
+              <Suspense fallback={<PageFallback />}>
+                <AssetDetail />
+              </Suspense>
             </DashboardLayout>
           }
         />
@@ -53,7 +72,9 @@ function App() {
           path="/intelligence/forecasting"
           element={
             <DashboardLayout>
-              <ForecastingCanvas />
+              <Suspense fallback={<PageFallback />}>
+                <ForecastingCanvas />
+              </Suspense>
             </DashboardLayout>
           }
         />
@@ -61,7 +82,9 @@ function App() {
           path="/intelligence/forecast-details"
           element={
             <DashboardLayout>
-              <ForecastDetailsPlaceholder />
+              <Suspense fallback={<PageFallback />}>
+                <ForecastDetailsPlaceholder />
+              </Suspense>
             </DashboardLayout>
           }
         />
@@ -69,7 +92,9 @@ function App() {
           path="/intelligence/anomaly-detection"
           element={
             <DashboardLayout>
-              <AnomalyDetectionCenter />
+              <Suspense fallback={<PageFallback />}>
+                <AnomalyDetectionCenter />
+              </Suspense>
             </DashboardLayout>
           }
         />
@@ -77,7 +102,9 @@ function App() {
           path="/intelligence/deviation-attribution"
           element={
             <DashboardLayout>
-              <DeviationAttribution />
+              <Suspense fallback={<PageFallback />}>
+                <DeviationAttribution />
+              </Suspense>
             </DashboardLayout>
           }
         />
@@ -85,7 +112,9 @@ function App() {
           path="/intelligence/root-cause"
           element={
             <DashboardLayout>
-              <RootCauseAnalysis />
+              <Suspense fallback={<PageFallback />}>
+                <RootCauseAnalysis />
+              </Suspense>
             </DashboardLayout>
           }
         />
@@ -93,7 +122,9 @@ function App() {
           path="/intelligence/priority"
           element={
             <DashboardLayout>
-              <InterventionPriority />
+              <Suspense fallback={<PageFallback />}>
+                <InterventionPriority />
+              </Suspense>
             </DashboardLayout>
           }
         />
@@ -101,7 +132,9 @@ function App() {
           path="/scenarios/recovery-what-if"
           element={
             <DashboardLayout>
-              <RecoveryWhatIf />
+              <Suspense fallback={<PageFallback />}>
+                <RecoveryWhatIf />
+              </Suspense>
             </DashboardLayout>
           }
         />
@@ -109,7 +142,9 @@ function App() {
           path="/scenarios/simulation"
           element={
             <DashboardLayout>
-              <SimulationCenter />
+              <Suspense fallback={<PageFallback />}>
+                <SimulationCenter />
+              </Suspense>
             </DashboardLayout>
           }
         />
@@ -117,7 +152,9 @@ function App() {
           path="/scenarios/injection"
           element={
             <DashboardLayout>
-              <ScenarioInjection />
+              <Suspense fallback={<PageFallback />}>
+                <ScenarioInjection />
+              </Suspense>
             </DashboardLayout>
           }
         />
@@ -125,7 +162,9 @@ function App() {
           path="/system/model-status"
           element={
             <DashboardLayout>
-              <ModelStatus />
+              <Suspense fallback={<PageFallback />}>
+                <ModelStatus />
+              </Suspense>
             </DashboardLayout>
           }
         />
@@ -133,7 +172,19 @@ function App() {
           path="/system/provenance"
           element={
             <DashboardLayout>
-              <DataProvenance />
+              <Suspense fallback={<PageFallback />}>
+                <DataProvenance />
+              </Suspense>
+            </DashboardLayout>
+          }
+        />
+        <Route
+          path="/data-provenance"
+          element={
+            <DashboardLayout>
+              <Suspense fallback={<PageFallback />}>
+                <DataProvenance />
+              </Suspense>
             </DashboardLayout>
           }
         />
@@ -141,7 +192,9 @@ function App() {
           path="/system/help"
           element={
             <DashboardLayout>
-              <HelpGlossary />
+              <Suspense fallback={<PageFallback />}>
+                <HelpGlossary />
+              </Suspense>
             </DashboardLayout>
           }
         />

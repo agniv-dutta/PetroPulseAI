@@ -28,6 +28,7 @@ import {
   X
 } from 'lucide-react';
 import { AssetMap } from '../components/AssetMap';
+import { DataTransparencyBanner } from '../components/DataTransparencyBanner';
 
 // Mock Data structure based on specifications
 const mockPortfolio = {
@@ -78,7 +79,7 @@ export const Dashboard: React.FC = () => {
       color: '#F3EFE4',
       display: 'flex',
       flexDirection: 'column',
-      fontFamily: "'Plus Jakarta Sans', sans-serif"
+      fontFamily: "'Inter', sans-serif"
     }}>
       {/* 1. PERSISTENT SYSTEM STATUS BAR */}
       <div style={{
@@ -118,6 +119,7 @@ export const Dashboard: React.FC = () => {
             onClick={() => setLastUpdatedTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))}
             style={{ background: 'none', border: 'none', color: '#B8B3A8', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
             title="Refresh Stream"
+            aria-label="Refresh stream"
           >
             <RefreshCw size={14} />
           </button>
@@ -126,7 +128,10 @@ export const Dashboard: React.FC = () => {
 
       {/* MAIN CONTAINER */}
       <div style={{ padding: '24px 32px', flex: 1, display: 'flex', flexDirection: 'column', gap: '24px' }}>
-        
+
+        {/* DATA TRANSPARENCY BANNER */}
+        <DataTransparencyBanner context="dashboard" isDismissible />
+
         {/* TOP HEADER & SEARCH */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '16px' }}>
           <div>
@@ -154,6 +159,7 @@ export const Dashboard: React.FC = () => {
               <input
                 type="text"
                 placeholder="Search telemetry, assets, or reports..."
+                aria-label="Search telemetry, assets, or reports"
                 style={{
                   background: 'transparent',
                   border: 'none',

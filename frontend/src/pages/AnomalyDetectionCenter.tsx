@@ -20,6 +20,7 @@ import {
   ChevronRight,
   X
 } from 'lucide-react';
+import { DataTransparencyBanner } from '../components/DataTransparencyBanner';
 
 export interface AnomalyItem {
   id: string;
@@ -289,6 +290,11 @@ export const AnomalyDetectionCenter: React.FC = () => {
   return (
     <div style={{ backgroundColor: '#080909', minHeight: '100vh', color: '#F3EFE4', padding: '24px 32px', fontFamily: "'Plus Jakarta Sans', sans-serif" }}>
       
+      {/* DATA TRANSPARENCY BANNER */}
+      <div style={{ marginBottom: '24px' }}>
+        <DataTransparencyBanner context="anomaly" isDismissible />
+      </div>
+
       {/* 1. PAGE HEADER */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '16px', marginBottom: '24px' }}>
         <div>
@@ -322,6 +328,7 @@ export const AnomalyDetectionCenter: React.FC = () => {
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               placeholder="Filter by ID, Basin..."
+              aria-label="Filter anomalies by ID or basin"
               style={{ background: 'transparent', border: 'none', outline: 'none', color: '#F3EFE4', fontSize: '12px', width: '100%' }}
             />
             {searchTerm && <X size={12} color="#B8B3A8" style={{ cursor: 'pointer' }} onClick={() => setSearchTerm('')} />}

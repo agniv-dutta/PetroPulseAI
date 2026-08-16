@@ -77,12 +77,17 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, setIsOpen }) => {
       <button 
         className="lg:hidden fixed bottom-4 right-4 z-50 p-3 bg-accent-amber text-dark-bg rounded-full shadow-lg hover:bg-opacity-95"
         onClick={() => setIsOpen(!isOpen)}
+        aria-label={isOpen ? 'Close navigation menu' : 'Open navigation menu'}
+        aria-expanded={isOpen}
+        aria-controls="app-sidebar"
       >
         {isOpen ? <X size={20} /> : <Menu size={20} />}
       </button>
 
       {/* Sidebar Panel */}
       <aside 
+        id="app-sidebar"
+        aria-label="Main navigation"
         className={`fixed top-0 left-0 z-40 h-screen w-64 bg-dark-surface border-r border-dark-border transition-transform lg:translate-x-0 flex flex-col ${
           isOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
@@ -114,6 +119,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, setIsOpen }) => {
                     <li key={iIdx}>
                       <NavLink
                         to={item.path}
+                        aria-current={isActive ? 'page' : undefined}
                         className={() => `
                           flex items-center gap-3 px-3 py-2 text-sm font-medium rounded transition-all duration-150 group
                           ${isActive

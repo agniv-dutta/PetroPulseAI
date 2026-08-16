@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Sidebar } from './Sidebar';
 import { SystemStatusBar } from './SystemStatusBar';
+import { Breadcrumbs } from './Breadcrumbs';
 
 interface DashboardLayoutProps {
   children: React.ReactNode;
@@ -21,6 +22,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
 
         {/* Dynamic Page Content */}
         <main className="flex-1 p-4 md:p-6 lg:p-8 max-w-[1600px] w-full mx-auto">
+          <Breadcrumbs />
           {children}
         </main>
       </div>

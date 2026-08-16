@@ -10,6 +10,8 @@ import {
   AlertOctagon,
   Sliders
 } from 'lucide-react';
+import { calculateAIPS } from '../utils/aipsCalculator';
+import type { AIPSPriority, AssetSeverity } from '../types';
 
 export interface AssetItem {
   rank: number;
@@ -20,10 +22,10 @@ export interface AssetItem {
   expectedProd: number;
   deviation: number;
   declineRate: number;
-  severity: 'CRITICAL' | 'HIGH' | 'WATCH' | 'NORMAL';
+  severity: AssetSeverity;
   recoveryPotential: number;
   aipsScore: number;
-  priority: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
+  priority: AIPSPriority;
 }
 
 // Helper to generate 128 assets
@@ -37,14 +39,60 @@ const generate128Assets = (): AssetItem[] => {
     { name: 'Rajasthan Basin', fields: ['Mangala Field', 'Bhagyam', 'Aishwariya', 'Barmer Block'] },
   ];
 
-  const assets: AssetItem[] = [
-    { rank: 1, id: 'MH-07', field: 'Mumbai High North', basin: 'Mumbai Offshore', currentProd: 1.17, expectedProd: 1.42, deviation: -17.4, declineRate: 2.3, severity: 'CRITICAL', recoveryPotential: 1.24, aipsScore: 92, priority: 'CRITICAL' },
-    { rank: 2, id: 'CB-12', field: 'Cauvery Offshore', basin: 'Cauvery Basin', currentProd: 0.89, expectedProd: 1.05, deviation: -15.2, declineRate: 1.8, severity: 'HIGH', recoveryPotential: 0.87, aipsScore: 78, priority: 'HIGH' },
-    { rank: 3, id: 'KG-102a', field: 'Ravva Platform Alpha', basin: 'KG Basin', currentProd: 8.15, expectedProd: 9.20, deviation: -11.4, declineRate: 1.5, severity: 'HIGH', recoveryPotential: 0.95, aipsScore: 76, priority: 'HIGH' },
-    { rank: 4, id: 'AS-09', field: 'Digboi Field', basin: 'Assam Shelf', currentProd: 0.42, expectedProd: 0.51, deviation: -17.6, declineRate: 2.7, severity: 'CRITICAL', recoveryPotential: 0.45, aipsScore: 88, priority: 'CRITICAL' },
-    { rank: 5, id: 'CB-991', field: 'Ankleshwar Sector 4', basin: 'Cambay Basin', currentProd: 4.20, expectedProd: 4.35, deviation: -3.4, declineRate: 0.9, severity: 'WATCH', recoveryPotential: 0.32, aipsScore: 42, priority: 'MEDIUM' },
-    { rank: 6, id: 'RJ-004', field: 'Mangala Field', basin: 'Rajasthan Basin', currentProd: 22.10, expectedProd: 22.00, deviation: 0.4, declineRate: 0.5, severity: 'NORMAL', recoveryPotential: 0.15, aipsScore: 12, priority: 'LOW' },
+  interface AssetSeed {
+    id: string;
+    field: string;
+    basin: string;
+    currentProd: number;
+    expectedProd: number;
+    deviation: number;
+    declineRate: number;
+    recoveryPotential: number;
+    anomalyScore: number;
+    histRate: number;
+    complexity: number;
+  }
+
+  const scoreAsset = (seed: AssetSeed): { aipsScore: number; priority: AssetItem['priority']; severity: AssetItem['severity'] } => {
+    const result = calculateAIPS({
+      asset_id: seed.id,
+      expected_production: seed.expectedProd,
+      actual_production: seed.currentProd,
+      anomaly_score: seed.anomalyScore,
+      historical_recovery_rate: seed.histRate,
+      intervention_complexity: seed.complexity,
+    });
+    const aipsScore = Math.round(result.aips_score);
+    const severity: AssetItem['severity'] = aipsScore >= 80 ? 'CRITICAL' : aipsScore >= 60 ? 'HIGH' : aipsScore >= 40 ? 'WATCH' : 'NORMAL';
+    return { aipsScore, priority: result.priority, severity };
+  };
+
+  const seedData: AssetSeed[] = [
+    { id: 'MH-07', field: 'Mumbai High North', basin: 'Mumbai Offshore', currentProd: 1.17, expectedProd: 1.42, deviation: -17.4, declineRate: 2.3, recoveryPotential: 1.24, anomalyScore: 0.94, histRate: 0.80, complexity: 0.60 },
+    { id: 'CB-12', field: 'Cauvery Offshore', basin: 'Cauvery Basin', currentProd: 0.89, expectedProd: 1.05, deviation: -15.2, declineRate: 1.8, recoveryPotential: 0.87, anomalyScore: 0.85, histRate: 0.80, complexity: 0.50 },
+    { id: 'KG-102a', field: 'Ravva Platform Alpha', basin: 'KG Basin', currentProd: 8.15, expectedProd: 9.20, deviation: -11.4, declineRate: 1.5, recoveryPotential: 0.95, anomalyScore: 0.80, histRate: 0.80, complexity: 0.55 },
+    { id: 'AS-09', field: 'Digboi Field', basin: 'Assam Shelf', currentProd: 0.42, expectedProd: 0.51, deviation: -17.6, declineRate: 2.7, recoveryPotential: 0.45, anomalyScore: 0.90, histRate: 0.85, complexity: 0.65 },
+    { id: 'CB-991', field: 'Ankleshwar Sector 4', basin: 'Cambay Basin', currentProd: 4.20, expectedProd: 4.35, deviation: -3.4, declineRate: 0.9, recoveryPotential: 0.32, anomalyScore: 0.55, histRate: 0.75, complexity: 0.30 },
+    { id: 'RJ-004', field: 'Mangala Field', basin: 'Rajasthan Basin', currentProd: 22.10, expectedProd: 22.00, deviation: 0.4, declineRate: 0.5, recoveryPotential: 0.15, anomalyScore: 0.20, histRate: 0.70, complexity: 0.20 },
   ];
+
+  const assets: AssetItem[] = seedData.map((seed, idx) => {
+    const { aipsScore, priority, severity } = scoreAsset(seed);
+    return {
+      rank: idx + 1,
+      id: seed.id,
+      field: seed.field,
+      basin: seed.basin,
+      currentProd: seed.currentProd,
+      expectedProd: seed.expectedProd,
+      deviation: seed.deviation,
+      declineRate: seed.declineRate,
+      severity,
+      recoveryPotential: seed.recoveryPotential,
+      aipsScore,
+      priority,
+    };
+  });
 
   const prefixList = ['MH', 'CB', 'KG', 'AS', 'CAM', 'RJ', 'WB', 'KUT'];
 
@@ -60,24 +108,25 @@ const generate128Assets = (): AssetItem[] => {
     const current = parseFloat((expected * (1 + devPct / 100)).toFixed(2));
     const decRate = parseFloat((Math.random() * 3 + 0.3).toFixed(1));
     const recovery = parseFloat((Math.random() * 1.5 + 0.1).toFixed(2));
-    
-    let aips = Math.floor(Math.abs(devPct) * 1.5 + decRate * 10);
-    if (aips > 98) aips = 98;
-    if (aips < 10) aips = 10;
 
-    let priority: AssetItem['priority'] = 'LOW';
-    let severity: AssetItem['severity'] = 'NORMAL';
+    // Derive AIPS inputs from generated asset characteristics
+    const anomalyScore = Math.min(0.95, Math.max(0.05, Math.abs(devPct) / 40 + Math.random() * 0.10));
+    const histRate = parseFloat((0.70 + Math.random() * 0.20).toFixed(2));
+    const complexity = Math.min(1, Math.max(0.05, decRate / 4 + Math.random() * 0.10));
 
-    if (aips >= 80) {
-      priority = 'CRITICAL';
-      severity = 'CRITICAL';
-    } else if (aips >= 60) {
-      priority = 'HIGH';
-      severity = 'HIGH';
-    } else if (aips >= 40) {
-      priority = 'MEDIUM';
-      severity = 'WATCH';
-    }
+    const { aipsScore, priority, severity } = scoreAsset({
+      id,
+      field: fieldName,
+      basin: basinObj.name,
+      currentProd: current,
+      expectedProd: expected,
+      deviation: devPct,
+      declineRate: decRate,
+      recoveryPotential: recovery,
+      anomalyScore,
+      histRate,
+      complexity,
+    });
 
     assets.push({
       rank: i,
@@ -90,7 +139,7 @@ const generate128Assets = (): AssetItem[] => {
       declineRate: decRate,
       severity,
       recoveryPotential: recovery,
-      aipsScore: aips,
+      aipsScore,
       priority
     });
   }
@@ -335,6 +384,7 @@ export const AssetLeaderboard: React.FC = () => {
               value={searchTerm}
               onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1); }}
               placeholder="Search assets, basins, fields..."
+              aria-label="Search assets, basins, fields"
               style={{
                 background: 'transparent',
                 border: 'none',
@@ -345,13 +395,15 @@ export const AssetLeaderboard: React.FC = () => {
               }}
             />
             {searchTerm && (
-              <X size={14} color="#B8B3A8" style={{ cursor: 'pointer' }} onClick={() => setSearchTerm('')} />
+              <X size={14} color="#B8B3A8" style={{ cursor: 'pointer' }} onClick={() => setSearchTerm('')} aria-label="Clear search" />
             )}
           </div>
 
           {/* Filter Panel Toggle Button */}
           <button
             onClick={() => setShowFilterPanel(!showFilterPanel)}
+            aria-expanded={showFilterPanel}
+            aria-controls="filter-panel"
             style={{
               display: 'flex',
               alignItems: 'center',
@@ -434,6 +486,7 @@ export const AssetLeaderboard: React.FC = () => {
           {/* CSV Export */}
           <button
             onClick={exportCSV}
+            aria-label="Download asset data as CSV"
             style={{
               backgroundColor: '#1A1D1F',
               border: '1px solid #2A2D30',
@@ -455,7 +508,8 @@ export const AssetLeaderboard: React.FC = () => {
 
       {/* 3. COLLAPSIBLE FILTER PANEL */}
       {showFilterPanel && (
-        <div style={{
+        <div id="filter-panel"
+          style={{
           backgroundColor: '#111313',
           borderLeft: '1px solid #2A2D30',
           borderRight: '1px solid #2A2D30',
@@ -545,6 +599,7 @@ export const AssetLeaderboard: React.FC = () => {
               <th style={{ padding: '14px 16px', width: '40px' }}>
                 <input
                   type="checkbox"
+                  aria-label="Select all assets on this page"
                   checked={selectedRows.length === paginatedAssets.length && paginatedAssets.length > 0}
                   onChange={(e) => handleSelectAll(e.target.checked)}
                 />
@@ -618,6 +673,7 @@ export const AssetLeaderboard: React.FC = () => {
                       type="checkbox"
                       checked={isSelected}
                       onChange={() => handleSelectRow(asset.id)}
+                      aria-label={`Select asset ${asset.id}`}
                     />
                   </td>
 
@@ -735,6 +791,7 @@ export const AssetLeaderboard: React.FC = () => {
           <button
             disabled={currentPage === 1}
             onClick={() => setCurrentPage(currentPage - 1)}
+            aria-label="Previous page"
             style={{
               backgroundColor: '#1A1D1F',
               border: '1px solid #2A2D30',
@@ -759,6 +816,7 @@ export const AssetLeaderboard: React.FC = () => {
           <button
             disabled={currentPage === totalPages}
             onClick={() => setCurrentPage(currentPage + 1)}
+            aria-label="Next page"
             style={{
               backgroundColor: '#1A1D1F',
               border: '1px solid #2A2D30',

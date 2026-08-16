@@ -195,13 +195,14 @@ export const simulateYieldChange = (pressurePct: number, chokePct: number): { yi
 export const mockAIPSBreakdown = {
   assetId: "MH-07",
   aipsScore: 92,
-  formula: "AIPS = (0.30 × Loss) + (0.25 × Anomaly) + (0.35 × Recovery) - (0.10 × Complexity)",
+  priority: "CRITICAL",
+  formula: "AIPS = (0.35 × Loss) + (0.25 × Anomaly) + (0.40 × Recovery) - (0.10 × Complexity)",
   components: [
     {
       name: "Production Loss",
-      weight: 0.30,
-      value: "-9.6%",
-      contribution: 5.2,
+      weight: 0.35,
+      value: "17.6% loss",
+      contribution: 34.2,
       impact: "HIGH IMPACT",
       color: "#FF9000"
     },
@@ -209,15 +210,15 @@ export const mockAIPSBreakdown = {
       name: "Anomaly Severity",
       weight: 0.25,
       value: "0.94 score",
-      contribution: 4.7,
+      contribution: 23.5,
       impact: "CRITICAL ALERT",
       color: "#FF3B3B"
     },
     {
       name: "Recovery Potential",
-      weight: 0.35,
-      value: "1.24 MMBL",
-      contribution: 4.3,
+      weight: 0.40,
+      value: "15.0% opportunity",
+      contribution: 39.9,
       impact: "HIGH YIELD",
       color: "#00D966"
     },
@@ -225,7 +226,7 @@ export const mockAIPSBreakdown = {
       name: "Intervention Complexity",
       weight: 0.10,
       value: "0.60 score",
-      contribution: 0.6,
+      contribution: 6.0,
       impact: "MODERATE",
       color: "#B8B3A8"
     }

@@ -11,14 +11,26 @@ import {
   ChevronUp,
   Flame
 } from 'lucide-react';
+import { AIPSBreakdown } from '../components/AIPSBreakdown';
+import { calculateAIPS } from '../utils/aipsCalculator';
 
 export const InterventionPriority: React.FC = () => {
   const [printSuccess, setPrintSuccess] = useState(false);
   const [activeAccordion, setActiveAccordion] = useState<string | null>('financial');
   const [investigationRaised, setInvestigationRaised] = useState(false);
 
-  const { assetId, aipsScore, formula, components, financials, bullets } = mockAIPSBreakdown;
+  const { assetId, aipsScore, components, financials, bullets } = mockAIPSBreakdown;
   const currentAsset = mockAssets.find(a => a.id === assetId) || mockAssets[0];
+
+  // Corrected AIPS calculation (single source of truth)
+  const aipsResult = calculateAIPS({
+    asset_id: assetId,
+    expected_production: 1.42,
+    actual_production: 1.17,
+    anomaly_score: 0.94,
+    historical_recovery_rate: 0.80,
+    intervention_complexity: 0.60,
+  });
 
   const toggleAccordion = (name: string) => {
     setActiveAccordion(activeAccordion === name ? null : name);
@@ -62,6 +74,7 @@ export const InterventionPriority: React.FC = () => {
         <div className="flex items-center gap-2 print:hidden">
           <button 
             onClick={handlePrint}
+            aria-label="Export recommendation as PDF"
             className="px-4 py-2 border border-dark-border bg-dark-surface hover:bg-dark-elevated text-text-primary text-xs font-bold uppercase tracking-wider rounded transition flex items-center gap-2"
           >
             <Printer size={14} />
@@ -153,33 +166,16 @@ export const InterventionPriority: React.FC = () => {
         </div>
       </div>
 
-      {/* Formula Breakdown Panel */}
-      <div className="bg-dark-surface border border-dark-border rounded p-6">
-        <h3 className="text-xs font-bold text-text-secondary uppercase tracking-widest mb-3">
-          AIPS PRIORITY ALGORITHM WEIGHTING
-        </h3>
-        
-        <div className="space-y-4">
-          <div className="p-4 bg-dark-bg border border-dark-border rounded font-mono text-center overflow-x-auto print:border-gray-300">
-            <div className="text-sm text-text-secondary mb-2 uppercase tracking-wide">Mathematical Representation</div>
-            <div className="text-base text-text-primary inline-flex gap-2 items-center min-w-max">
-              <span>{formula}</span>
-            </div>
-            <div className="text-lg font-bold text-text-primary mt-4 flex items-center justify-center gap-2">
-              <span>AIPS = </span>
-              <span className="text-accent-amber">5.2 (Loss)</span>
-              <span>+</span>
-              <span className="text-accent-red">4.7 (Anomaly)</span>
-              <span>+</span>
-              <span className="text-accent-green">4.3 (Recovery)</span>
-              <span>-</span>
-              <span className="text-text-secondary">0.6 (Complexity)</span>
-              <span> = </span>
-              <span className="text-accent-red font-extrabold pl-1 text-2xl">{aipsScore}</span>
-            </div>
-          </div>
-        </div>
-      </div>
+      {/* Corrected AIPS Breakdown (formula, components, confidence) */}
+      <AIPSBreakdown
+        aips_score={aipsResult.aips_score}
+        priority={aipsResult.priority}
+        loss_magnitude={aipsResult.loss_magnitude}
+        anomaly_severity={aipsResult.anomaly_severity}
+        recovery_opportunity={aipsResult.recovery_opportunity}
+        intervention_complexity={aipsResult.intervention_complexity}
+        confidence={aipsResult.confidence}
+      />
 
       {/* Detailed analysis grid */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -221,6 +217,7 @@ export const InterventionPriority: React.FC = () => {
             ) : (
               <button 
                 onClick={triggerInvestigation}
+                aria-label="Prioritize asset for investigation"
                 className="w-full bg-accent-red hover:bg-opacity-95 text-white text-xs font-bold uppercase tracking-wider py-3 rounded transition font-mono flex items-center justify-center gap-2 shadow-lg shadow-accent-red shadow-opacity-10"
               >
                 <span>▶ PRIORITIZE FOR INVESTIGATION</span>
@@ -241,6 +238,11 @@ export const InterventionPriority: React.FC = () => {
         {/* Financial Accordion Header */}
         <div 
           onClick={() => toggleAccordion('financial')}
+          role="button"
+          aria-expanded={activeAccordion === 'financial'}
+          aria-controls="financial-accordion-panel"
+          tabIndex={0}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleAccordion('financial'); } }}
           className="p-4 border-b border-dark-border flex justify-between items-center cursor-pointer hover:bg-dark-elevated transition select-none"
         >
           <div className="flex items-center gap-2.5">
@@ -254,7 +256,7 @@ export const InterventionPriority: React.FC = () => {
         
         {/* Financial Accordion Content */}
         {activeAccordion === 'financial' && (
-          <div className="p-6 bg-dark-bg bg-opacity-50 space-y-6">
+          <div id="financial-accordion-panel" className="p-6 bg-dark-bg bg-opacity-50 space-y-6">
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div className="p-4 bg-dark-elevated border border-dark-border rounded">
                 <span className="text-[9px] text-text-secondary font-mono uppercase">Estimated Cost</span>
@@ -319,6 +321,11 @@ export const InterventionPriority: React.FC = () => {
         {/* Similar past cases */}
         <div 
           onClick={() => toggleAccordion('cases')}
+          role="button"
+          aria-expanded={activeAccordion === 'cases'}
+          aria-controls="cases-accordion-panel"
+          tabIndex={0}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleAccordion('cases'); } }}
           className="p-4 border-t border-dark-border flex justify-between items-center cursor-pointer hover:bg-dark-elevated transition select-none"
         >
           <div className="flex items-center gap-2.5">
@@ -331,7 +338,7 @@ export const InterventionPriority: React.FC = () => {
         </div>
 
         {activeAccordion === 'cases' && (
-          <div className="p-6 bg-dark-bg bg-opacity-50 text-xs font-mono">
+          <div id="cases-accordion-panel" className="p-6 bg-dark-bg bg-opacity-50 text-xs font-mono">
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div className="p-4 bg-dark-elevated border border-dark-border rounded">
                 <div className="text-[10px] text-text-secondary uppercase">AS-09 (2025)</div>
