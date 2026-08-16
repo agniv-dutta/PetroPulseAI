@@ -12,6 +12,21 @@ out/
 .env.local
 .env.*.local
 
+# Python virtual environments
+.venv/
+venv/
+env/
+
+# Python cache and tooling artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
 # Logs
 logs/
 *.log

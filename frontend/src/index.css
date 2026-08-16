@@ -1,0 +1,74 @@
+@import "leaflet/dist/leaflet.css";
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,300..800;1,300..800&family=Plus+Jakarta+Sans:ital,wght@0,300..800;1,300..800&display=swap');
+
+:root {
+  --bg-dark: #080909;
+  --bg-surface: #111313;
+  --card-bg: #1A1D1F;
+  --border-subtle: #2A2D30;
+  --accent-energy: #FF9000;
+  --accent-risk: #FF3B3B;
+  --accent-success: #00D966;
+  --accent-ai: #C7F700;
+  --text-primary: #F3EFE4;
+  --text-secondary: #B8B3A8;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background-color: var(--bg-dark);
+  color: var(--text-primary);
+  font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
+}
+
+code, pre, .font-mono {
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #111313;
+}
+::-webkit-scrollbar-thumb {
+  background: #2A2D30;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #FF9000;
+}
+
+/* Leaflet Map Custom Overrides */
+.leaflet-container {
+  width: 100%;
+  height: 100%;
+  background-color: #111313 !important;
+  border-radius: 8px;
+}
+
+.leaflet-tile-pane {
+  filter: invert(100%) hue-rotate(180deg) brightness(95%) contrast(90%);
+}
+
+.leaflet-popup-content-wrapper {
+  background: #1A1D1F !important;
+  color: #F3EFE4 !important;
+  border: 1px solid #2A2D30 !important;
+  box-shadow: 0 10px 25px rgba(0,0,0,0.5) !important;
+  border-radius: 8px !important;
+}
+
+.leaflet-popup-tip {
+  background: #1A1D1F !important;
+}
