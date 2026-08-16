@@ -676,7 +676,7 @@ export const AnomalyDetectionCenter: React.FC = () => {
               </div>
 
               <button
-                onClick={() => navigate(`/attribution/${currentAsset.assetId}`)}
+                onClick={() => navigate('/intelligence/deviation-attribution')}
                 style={{
                   backgroundColor: 'transparent',
                   border: 'none',

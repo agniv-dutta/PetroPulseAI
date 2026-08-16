@@ -404,7 +404,7 @@ export const Dashboard: React.FC = () => {
           <div
             onMouseEnter={() => setHoveredCard('anomalies')}
             onMouseLeave={() => setHoveredCard(null)}
-            onClick={() => navigate('/anomalies')}
+            onClick={() => navigate('/intelligence/anomaly-detection')}
             style={{
               backgroundColor: '#1A1D1F',
               border: hoveredCard === 'anomalies' ? '1px solid #FF9000' : '1px solid #2A2D30',
@@ -443,7 +443,7 @@ export const Dashboard: React.FC = () => {
           <div
             onMouseEnter={() => setHoveredCard('recovery')}
             onMouseLeave={() => setHoveredCard(null)}
-            onClick={() => navigate('/recovery')}
+            onClick={() => navigate('/scenarios/recovery-what-if')}
             style={{
               backgroundColor: '#1A1D1F',
               border: hoveredCard === 'recovery' ? '1px solid #00D966' : '1px solid #2A2D30',
@@ -557,7 +557,7 @@ export const Dashboard: React.FC = () => {
                 <span style={{ fontSize: '11px', color: '#B8B3A8' }}>India Basin Telemetry & Heatmap</span>
               </div>
               <button
-                onClick={() => navigate('/asset-map')}
+                onClick={() => navigate('/assets/leaderboard')}
                 style={{
                   backgroundColor: 'transparent',
                   border: 'none',
@@ -576,7 +576,7 @@ export const Dashboard: React.FC = () => {
 
             {/* Interactive Leaflet India Map Component */}
             <div style={{ flex: 1, minHeight: '300px' }}>
-              <AssetMap onSelectAsset={() => navigate('/leaderboard')} />
+              <AssetMap onSelectAsset={() => navigate('/assets/leaderboard')} />
             </div>
           </div>
         </div>
@@ -607,7 +607,7 @@ export const Dashboard: React.FC = () => {
                 </h3>
               </div>
               <button
-                onClick={() => navigate('/anomalies')}
+                onClick={() => navigate('/intelligence/anomaly-detection')}
                 style={{
                   backgroundColor: 'transparent',
                   border: 'none',
@@ -697,7 +697,7 @@ export const Dashboard: React.FC = () => {
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               <button
-                onClick={() => navigate('/leaderboard')}
+                onClick={() => navigate('/assets/leaderboard')}
                 style={{
                   backgroundColor: '#FF9000',
                   color: '#080909',
@@ -719,7 +719,7 @@ export const Dashboard: React.FC = () => {
               </button>
 
               <button
-                onClick={() => navigate('/simulation')}
+                onClick={() => navigate('/scenarios/simulation')}
                 style={{
                   backgroundColor: 'transparent',
                   color: '#FF9000',
@@ -812,7 +812,7 @@ export const Dashboard: React.FC = () => {
               <button
                 onClick={() => {
                   setSelectedAnomaly(null);
-                  navigate('/anomalies');
+                  navigate('/intelligence/anomaly-detection');
                 }}
                 style={{
                   flex: 1,

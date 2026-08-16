@@ -1,6 +1,7 @@
 import React from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { 
+  Home,
   LayoutDashboard, 
   Database, 
   Activity, 
@@ -30,7 +31,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, setIsOpen }) => {
     {
       category: 'MAIN',
       items: [
-        { name: 'Dashboard', path: '/', icon: LayoutDashboard },
+        { name: 'Landing Page', path: '/', icon: Home },
+        { name: 'Dashboard', path: '/dashboard', icon: LayoutDashboard },
       ]
     },
     {

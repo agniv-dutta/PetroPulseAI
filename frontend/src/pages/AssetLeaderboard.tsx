@@ -598,7 +598,7 @@ export const AssetLeaderboard: React.FC = () => {
               return (
                 <tr
                   key={asset.id}
-                  onClick={() => navigate('/anomalies')}
+                  onClick={() => navigate(`/assets/detail/${asset.id}`)}
                   style={{
                     backgroundColor: isCritical ? '#FF3B3B11' : (isSelected ? '#1A1D1F' : 'transparent'),
                     borderBottom: '1px solid #1A1D1F',

@@ -166,7 +166,7 @@ export const DeviationAttribution: React.FC = () => {
 
         <div style={{ display: 'flex', gap: '12px' }}>
           <button
-            onClick={() => navigate(`/asset/${data.assetId}`)}
+            onClick={() => navigate(`/assets/detail/${data.assetId}`)}
             style={{
               backgroundColor: '#1A1D1F',
               border: '1px solid #2A2D30',
