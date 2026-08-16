@@ -1,58 +1,48 @@
-import React from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
-import { Sidebar } from './components/Sidebar';
-import { Dashboard } from './pages/Dashboard';
-import { AssetLeaderboard } from './pages/AssetLeaderboard';
-import { AssetDetail } from './pages/AssetDetail';
-import { ForecastingCanvas } from './pages/ForecastingCanvas';
-import { AnomalyDetectionCenter } from './pages/AnomalyDetectionCenter';
-import { DeviationAttribution } from './pages/DeviationAttribution';
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { DashboardLayout } from './components/DashboardLayout';
+import {
+  AnomalyDetectionPlaceholder,
+  AssetDetailPlaceholder,
+  AssetLeaderboardPlaceholder,
+  DashboardPlaceholder,
+  DeviationAttributionPlaceholder,
+  ForecastDetailsPlaceholder,
+  ForecastingCanvasPlaceholder,
+} from './pages/PlaceholderPages';
+import { DataProvenance } from './pages/DataProvenance';
+import { HelpGlossary } from './pages/HelpGlossary';
 import { InterventionPriority } from './pages/InterventionPriority';
+import { ModelStatus } from './pages/ModelStatus';
+import { RecoveryWhatIf } from './pages/RecoveryWhatIf';
+import { RootCauseAnalysis } from './pages/RootCauseAnalysis';
+import { ScenarioInjection } from './pages/ScenarioInjection';
+import { SimulationCenter } from './pages/SimulationCenter';
 
-// Placeholder views for sub-routes
-const PlaceholderPage: React.FC<{ title: string }> = ({ title }) => (
-  <div style={{ padding: '40px', color: '#F3EFE4' }}>
-    <h1 style={{ fontSize: '24px', fontWeight: 700 }}>{title}</h1>
-    <p style={{ color: '#B8B3A8', marginTop: '8px' }}>Module view under active development.</p>
-  </div>
-);
-
-export const App: React.FC = () => {
+function App() {
   return (
-    <Router>
-      <div style={{ display: 'flex', minHeight: '100vh', backgroundColor: '#080909' }}>
-        <Sidebar />
-        <main style={{ flex: 1, overflowY: 'auto' }}>
-          <Routes>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/asset-map" element={<PlaceholderPage title="Asset Geospatial Map" />} />
-            <Route path="/metrics" element={<ForecastingCanvas />} />
-            <Route path="/forecast" element={<ForecastingCanvas />} />
-            <Route path="/anomalies" element={<AnomalyDetectionCenter />} />
-            <Route path="/attribution" element={<DeviationAttribution />} />
-            <Route path="/attribution/:id" element={<DeviationAttribution />} />
-            <Route path="/intervention" element={<InterventionPriority />} />
-            <Route path="/intervention/:id" element={<InterventionPriority />} />
-            <Route path="/recovery" element={<InterventionPriority />} />
-            <Route path="/reports" element={<PlaceholderPage title="Field Reports" />} />
-            <Route path="/leaderboard" element={<AssetLeaderboard />} />
-            <Route path="/asset/:id" element={<AssetDetail />} />
-            <Route path="/asset" element={<AssetDetail />} />
-            <Route path="/recovery" element={<PlaceholderPage title="Estimated Recovery Potential" />} />
-            <Route path="/equipment" element={<PlaceholderPage title="Equipment Health" />} />
-            <Route path="/esg" element={<PlaceholderPage title="ESG Tracking" />} />
-            <Route path="/maintenance" element={<PlaceholderPage title="Predictive Maintenance" />} />
-            <Route path="/cost" element={<PlaceholderPage title="Cost Analysis" />} />
-            <Route path="/team" element={<PlaceholderPage title="Team Collaboration" />} />
-            <Route path="/exports" element={<PlaceholderPage title="Data Exports" />} />
-            <Route path="/api" element={<PlaceholderPage title="API Access" />} />
-            <Route path="/settings" element={<PlaceholderPage title="Settings" />} />
-            <Route path="/simulation" element={<PlaceholderPage title="Reservoir & Production Simulation" />} />
-          </Routes>
-        </main>
-      </div>
-    </Router>
+    <BrowserRouter>
+      <DashboardLayout>
+        <Routes>
+          <Route path="/" element={<DashboardPlaceholder />} />
+          <Route path="/assets/leaderboard" element={<AssetLeaderboardPlaceholder />} />
+          <Route path="/assets/detail/:assetId" element={<AssetDetailPlaceholder />} />
+          <Route path="/intelligence/forecasting" element={<ForecastingCanvasPlaceholder />} />
+          <Route path="/intelligence/forecast-details" element={<ForecastDetailsPlaceholder />} />
+          <Route path="/intelligence/anomaly-detection" element={<AnomalyDetectionPlaceholder />} />
+          <Route path="/intelligence/deviation-attribution" element={<DeviationAttributionPlaceholder />} />
+          <Route path="/intelligence/root-cause" element={<RootCauseAnalysis />} />
+          <Route path="/intelligence/priority" element={<InterventionPriority />} />
+          <Route path="/scenarios/recovery-what-if" element={<RecoveryWhatIf />} />
+          <Route path="/scenarios/simulation" element={<SimulationCenter />} />
+          <Route path="/scenarios/injection" element={<ScenarioInjection />} />
+          <Route path="/system/model-status" element={<ModelStatus />} />
+          <Route path="/system/provenance" element={<DataProvenance />} />
+          <Route path="/system/help" element={<HelpGlossary />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </DashboardLayout>
+    </BrowserRouter>
   );
-};
+}
 
 export default App;

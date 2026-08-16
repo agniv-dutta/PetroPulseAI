@@ -1,540 +1,395 @@
 import React, { useState } from 'react';
-import { useNavigate, useParams, Link } from 'react-router-dom';
-import {
-  ArrowLeft,
-  AlertTriangle,
-  CheckCircle2,
-  Printer,
-  Play
+import { mockAIPSBreakdown, mockAssets } from '../data/mockData';
+import { 
+  DollarSign, 
+  Users, 
+  Wrench, 
+  Printer, 
+  CheckCircle,
+  FileSpreadsheet,
+  ChevronDown,
+  ChevronUp,
+  Flame
 } from 'lucide-react';
 
 export const InterventionPriority: React.FC = () => {
-  const navigate = useNavigate();
-  const { id } = useParams<{ id: string }>();
-  const assetId = id || 'MH-07';
+  const [printSuccess, setPrintSuccess] = useState(false);
+  const [activeAccordion, setActiveAccordion] = useState<string | null>('financial');
+  const [investigationRaised, setInvestigationRaised] = useState(false);
 
-  const [activeStep, setActiveStep] = useState<number>(1);
-  const [modalAction, setModalAction] = useState<string | null>(null);
+  const { assetId, aipsScore, formula, components, financials, bullets } = mockAIPSBreakdown;
+  const currentAsset = mockAssets.find(a => a.id === assetId) || mockAssets[0];
 
-  const mockPriorityData = {
-    id: assetId,
-    field: 'Mumbai High North',
-    basin: 'Arabian Sea (Western Offshore)',
-    aipsScore: 92,
-    severity: 'CRITICAL',
-    expectedProd: '1.42 MMBL',
-    actualProd: '1.17 MMBL',
-    deviationPct: '-17.4%',
-    declineRate: '2.3% / month',
-    anomalyScore: 0.94,
-    recoveryPotential: '1.24 MMBL',
-    complexityScore: 0.60,
-
-    components: [
-      {
-        title: 'Production Loss',
-        weight: '30% Weight',
-        value: 'Value: -17.4%',
-        contribution: 'Contribution: 5.2',
-        tag: '◆ HIGH IMPACT',
-        color: '#FF3B3B'
-      },
-      {
-        title: 'Anomaly Severity',
-        weight: '25% Weight',
-        value: 'Score: 0.94',
-        contribution: 'Contribution: 4.7',
-        tag: '◆ CRITICAL',
-        color: '#FF3B3B'
-      },
-      {
-        title: 'Recovery Potential',
-        weight: '35% Weight',
-        value: 'Value: 1.24 MMBL',
-        contribution: 'Contribution: 4.3',
-        tag: '◆ HIGH POTENTIAL',
-        color: '#00D966'
-      },
-      {
-        title: 'Complexity',
-        weight: '10% Weight',
-        value: 'Score: 0.60',
-        contribution: 'Contribution: 0.6',
-        tag: '◆ MEDIUM COMPLEXITY',
-        color: '#FF9000'
-      }
-    ],
-
-    rankingContext: [
-      { rank: 1, id: 'MH-07', score: 92, status: 'CRITICAL', current: true },
-      { rank: 2, id: 'CB-12', score: 78, status: 'HIGH', current: false },
-      { rank: 3, id: 'KG-05', score: 65, status: 'MEDIUM', current: false },
-      { rank: 4, id: 'AS-09', score: 58, status: 'MEDIUM', current: false },
-    ],
-
-    risks: {
-      operational: [
-        'Field is mature (>15 years); recovery window time-sensitive.',
-        'Pressure sensor PT-104 sub-assembly has history of thermal drift.'
-      ],
-      financial: {
-        cost: '$1.2M USD',
-        expectedValue: '~$62M USD (at $50/barrel)',
-        roi: 'Positive (Breakeven in 3 weeks)'
-      },
-      resources: {
-        crew: '4 Senior Field Technicians',
-        duration: '2 - 3 Days',
-        equipment: 'Pressure regulator PT-104, Subsea flow meter calibration kit'
-      }
-    },
-
-    similarCases: [
-      { id: 'AS-09 (2025)', field: 'Assam Shelf', recovery: '+0.92 MMBL', cost: '$0.9M', status: 'SUCCESS' },
-      { id: 'CB-08 (2025)', field: 'Cauvery Basin', recovery: '+1.15 MMBL', cost: '$1.1M', status: 'SUCCESS' },
-      { id: 'MH-04 (2024)', field: 'Mumbai High', recovery: '+0.67 MMBL', cost: '$0.8M', status: 'SUCCESS' },
-    ],
-
-    nextSteps: [
-      { step: 1, title: 'Notify Field Operations Team', team: 'Control Room Ops', duration: 'Immediate', desc: 'Send dispatch notification to Lead Engineer on duty.' },
-      { step: 2, title: 'Schedule On-Site Diagnostic', team: 'Offshore Diagnostic Crew', duration: '48 Hours', desc: 'Deploy calibration technicians to Zone B manifold.' },
-      { step: 3, title: 'Prepare Intervention Plan', team: 'Reservoir Engineering', duration: '24 Hours', desc: 'Finalize choke valve recalibration & pressure equalization procedure.' },
-      { step: 4, title: 'Execute Intervention', team: 'Field Technicians', duration: '2-3 Days', desc: 'Perform physical valve inspection and sensor replacement.' },
-      { step: 5, title: 'Monitor Recovery Telemetry', team: 'PetroPulse AI Stream', duration: '1 Week', desc: 'Validate post-intervention yield gain vs 1.24 MMBL target.' }
-    ]
+  const toggleAccordion = (name: string) => {
+    setActiveAccordion(activeAccordion === name ? null : name);
   };
 
   const handlePrint = () => {
-    window.print();
+    setPrintSuccess(true);
+    setTimeout(() => {
+      window.print();
+      setPrintSuccess(false);
+    }, 1500);
   };
 
+  const triggerInvestigation = () => {
+    setInvestigationRaised(true);
+  };
+
+  // SVG Gauge calculations
+  const radius = 50;
+  const strokeWidth = 8;
+  const circumference = 2 * Math.PI * radius;
+  const strokeDashoffset = circumference - (aipsScore / 100) * circumference;
+
   return (
-    <div style={{ backgroundColor: '#080909', minHeight: '100vh', color: '#F3EFE4', padding: '24px 32px', paddingBottom: '80px' }}>
-      
-      {/* BREADCRUMB & PRINT BUTTON */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: '#B8B3A8' }}>
-          <Link to="/leaderboard" style={{ color: '#FF9000', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: 600 }}>
-            <ArrowLeft size={14} /> Back to Leaderboard
-          </Link>
-          <span>/</span>
-          <span>Intervention Priority</span>
-          <span>/</span>
-          <span style={{ color: '#F3EFE4', fontWeight: 700 }}>{mockPriorityData.id}</span>
+    <div className="space-y-6 print:bg-white print:text-black">
+      {/* Header and Actions */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-dark-border pb-4 gap-4 print:border-black">
+        <div>
+          <div className="flex items-center gap-2 text-accent-red text-xs font-mono mb-1">
+            <Flame size={14} className="animate-pulse" />
+            <span>AIPS DECISION SUPPORT BOARD</span>
+          </div>
+          <h1 className="text-3xl font-bold uppercase tracking-wide text-text-primary print:text-black">
+            Intervention Priority Center
+          </h1>
+          <p className="text-sm text-text-secondary mt-1 print:text-gray-600">
+            AIPS ranked decision pathways and resource planning for candidate assets
+          </p>
         </div>
 
-        <button
-          onClick={handlePrint}
-          style={{
-            backgroundColor: '#1A1D1F',
-            border: '1px solid #2A2D30',
-            color: '#F3EFE4',
-            borderRadius: '6px',
-            padding: '8px 14px',
-            fontSize: '12px',
-            fontWeight: 600,
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '6px'
-          }}
-        >
-          <Printer size={14} color="#00D966" /> Print Recommendation
-        </button>
-      </div>
-
-      {/* 1. PAGE HEADER */}
-      <div style={{ marginBottom: '24px' }}>
-        <div style={{ fontSize: '11px', fontWeight: 700, color: '#FF9000', letterSpacing: '0.1em', textTransform: 'uppercase' }}>
-          DECISION SUPPORT SYSTEM (AIPS)
+        <div className="flex items-center gap-2 print:hidden">
+          <button 
+            onClick={handlePrint}
+            className="px-4 py-2 border border-dark-border bg-dark-surface hover:bg-dark-elevated text-text-primary text-xs font-bold uppercase tracking-wider rounded transition flex items-center gap-2"
+          >
+            <Printer size={14} />
+            <span>{printSuccess ? 'GENERATING PDF...' : 'Export Recommendation'}</span>
+          </button>
         </div>
-        <h1 style={{ fontSize: '28px', fontWeight: 800, color: '#F3EFE4', margin: '4px 0 0 0', letterSpacing: '-0.5px' }}>
-          Intervention Priority & Decision Panel
-        </h1>
-        <p style={{ fontSize: '13px', color: '#B8B3A8', marginTop: '4px' }}>
-          AI-driven recommendations for operational intervention allocation
-        </p>
       </div>
 
-      {/* 2. PROMINENT FEATURED ASSET CARD (CENTER) */}
-      <div style={{
-        background: 'linear-gradient(135deg, #1A1D1F 0%, #111313 100%)',
-        border: '1px solid #FF3B3B66',
-        borderRadius: '12px',
-        padding: '32px',
-        marginBottom: '24px',
-        boxShadow: '0 10px 30px rgba(0,0,0,0.5)'
-      }}>
-        
-        {/* Top Identity & Circular AIPS Gauge */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '24px' }}>
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-              <h2 style={{ fontSize: '48px', fontWeight: 900, color: '#F3EFE4', margin: 0, letterSpacing: '-1.5px', lineHeight: 1 }}>
-                {mockPriorityData.id}
+      {/* Main Asset Highlight Card */}
+      <div className="bg-gradient-to-br from-dark-elevated to-dark-surface border border-dark-border rounded-lg p-6 md:p-8 print:border-black print:text-black">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-center">
+          
+          {/* Column 1: Asset Identity */}
+          <div className="space-y-4">
+            <div>
+              <span className="text-[10px] text-text-secondary font-mono tracking-widest uppercase">Target Candidate</span>
+              <h2 className="text-5xl font-extrabold text-text-primary mt-1 font-mono tracking-tight print:text-black">
+                {assetId}
               </h2>
-              <span style={{
-                backgroundColor: '#FF3B3B22',
-                color: '#FF3B3B',
-                border: '1px solid #FF3B3B',
-                fontSize: '14px',
-                fontWeight: 900,
-                padding: '6px 14px',
-                borderRadius: '6px',
-                letterSpacing: '0.05em'
-              }}>
-                ◆ CRITICAL
+              <div className="text-sm font-semibold text-text-secondary mt-1 font-sans">
+                {currentAsset.field} Field — {currentAsset.basin}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 bg-accent-red rounded-full shrink-0"></span>
+              <span className="text-sm font-bold uppercase tracking-wider text-accent-red">
+                ◆ PRIORITY SEVERITY: CRITICAL
               </span>
             </div>
-            <div style={{ fontSize: '14px', color: '#B8B3A8', marginTop: '6px' }}>
-              {mockPriorityData.field} • <span style={{ color: '#F3EFE4' }}>{mockPriorityData.basin}</span>
+
+            <div className="text-xs text-text-secondary leading-relaxed bg-dark-bg bg-opacity-50 p-3 rounded border border-dark-border border-opacity-40 font-sans print:border-gray-300">
+              This asset registers high cumulative production loss combined with high recovery potential, triggering a priority rank of #1 across the regional asset matrix.
             </div>
           </div>
 
-          {/* Circular AIPS Gauge */}
-          <div style={{
-            position: 'relative',
-            width: '140px',
-            height: '140px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center'
-          }}>
-            <svg width="140" height="140" viewBox="0 0 100 100">
-              <circle cx="50" cy="50" r="42" stroke="#2A2D30" strokeWidth="8" fill="none" />
-              <circle
-                cx="50"
-                cy="50"
-                r="42"
-                stroke="#FF3B3B"
-                strokeWidth="8"
-                fill="none"
-                strokeDasharray="264"
-                strokeDashoffset={264 * (1 - mockPriorityData.aipsScore / 100)}
-                strokeLinecap="round"
-                transform="rotate(-90 50 50)"
-              />
-            </svg>
-            <div style={{ position: 'absolute', textAlign: 'center' }}>
-              <div style={{ fontSize: '38px', fontWeight: 900, color: '#FF3B3B', lineHeight: 1 }}>
-                {mockPriorityData.aipsScore}
-              </div>
-              <div style={{ fontSize: '10px', color: '#B8B3A8', fontWeight: 700, marginTop: '2px' }}>
-                OUT OF 100
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Component Breakdown 4-Card Grid */}
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-          gap: '16px',
-          margin: '28px 0 20px 0'
-        }}>
-          {mockPriorityData.components.map((comp, idx) => (
-            <div
-              key={idx}
-              style={{
-                backgroundColor: '#111313',
-                border: `1px solid ${comp.color}44`,
-                borderRadius: '8px',
-                padding: '16px',
-                display: 'flex',
-                flexDirection: 'column',
-                justifyContent: 'space-between'
-              }}
-            >
-              <div>
-                <div style={{ fontSize: '12px', fontWeight: 700, color: '#F3EFE4' }}>{comp.title}</div>
-                <div style={{ fontSize: '10px', color: '#B8B3A8', marginTop: '2px' }}>{comp.weight}</div>
-              </div>
-
-              <div style={{ marginTop: '14px' }}>
-                <div style={{ fontSize: '15px', fontWeight: 900, color: comp.color }}>{comp.value}</div>
-                <div style={{ fontSize: '11px', color: '#B8B3A8', marginTop: '2px' }}>{comp.contribution}</div>
-                <div style={{ fontSize: '10px', fontWeight: 800, color: comp.color, marginTop: '6px' }}>{comp.tag}</div>
+          {/* Column 2: AIPS Circle Gauge */}
+          <div className="flex flex-col items-center justify-center py-4">
+            <div className="relative w-40 h-40">
+              {/* SVG circular track */}
+              <svg className="w-full h-full transform -rotate-90">
+                <circle 
+                  cx="80" 
+                  cy="80" 
+                  r={radius} 
+                  stroke="#2A2D30" 
+                  strokeWidth={strokeWidth} 
+                  fill="transparent" 
+                />
+                <circle 
+                  cx="80" 
+                  cy="80" 
+                  r={radius} 
+                  stroke="#FF3B3B" 
+                  strokeWidth={strokeWidth} 
+                  fill="transparent" 
+                  strokeDasharray={circumference}
+                  strokeDashoffset={strokeDashoffset}
+                  strokeLinecap="round"
+                />
+              </svg>
+              {/* Inner score label */}
+              <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
+                <span className="text-xs font-mono text-text-secondary uppercase">AIPS Score</span>
+                <span className="text-4xl font-extrabold text-accent-red font-mono leading-none mt-1">
+                  {aipsScore}
+                </span>
+                <span className="text-[10px] text-text-secondary font-mono mt-1">/ 100</span>
               </div>
             </div>
-          ))}
-        </div>
-
-        {/* 3. VISUAL AIPS FORMULA */}
-        <div style={{
-          backgroundColor: '#111313',
-          border: '1px solid #2A2D30',
-          borderRadius: '8px',
-          padding: '14px 20px',
-          fontFamily: 'monospace',
-          fontSize: '12px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          flexWrap: 'wrap',
-          gap: '12px'
-        }}>
-          <div>
-            <span style={{ color: '#B8B3A8' }}>AIPS Formula: </span>
-            <span style={{ color: '#00D966' }}>(0.30 × |-17.4%|)</span> + <span style={{ color: '#00D966' }}>(0.25 × 0.94)</span> + <span style={{ color: '#00D966' }}>(0.35 × 1.24)</span> - <span style={{ color: '#FF3B3B' }}>(0.10 × 0.60)</span>
           </div>
 
-          <div style={{ fontSize: '14px', fontWeight: 900, color: '#FF3B3B' }}>
-            AIPS = 5.2 + 4.7 + 4.3 - 0.6 = 92
+          {/* Column 3: Components Contribution List */}
+          <div className="grid grid-cols-2 gap-3">
+            {components.map((item, idx) => (
+              <div key={idx} className="p-3 bg-dark-bg border border-dark-border rounded print:border-gray-300">
+                <div className="text-[10px] font-mono text-text-secondary uppercase tracking-wider">{item.name}</div>
+                <div className="text-sm font-bold text-text-primary mt-1 font-mono">{item.value}</div>
+                <div className="flex justify-between items-center mt-2">
+                  <span className="text-[10px] text-text-secondary font-mono">Contr: +{item.contribution}</span>
+                  <span className="text-[9px] font-bold uppercase tracking-wider" style={{ color: item.color }}>
+                    {item.impact}
+                  </span>
+                </div>
+              </div>
+            ))}
           </div>
+
         </div>
       </div>
 
-      {/* 4. WHY PRIORITIZE MH-07? (DECISION RATIONALE) */}
-      <div style={{ backgroundColor: '#1A1D1F', border: '1px solid #2A2D30', borderRadius: '10px', padding: '24px', marginBottom: '24px' }}>
-        <h3 style={{ fontSize: '18px', fontWeight: 800, color: '#F3EFE4', margin: '0 0 16px 0' }}>
-          Why Prioritize Asset {mockPriorityData.id}?
+      {/* Formula Breakdown Panel */}
+      <div className="bg-dark-surface border border-dark-border rounded p-6">
+        <h3 className="text-xs font-bold text-text-secondary uppercase tracking-widest mb-3">
+          AIPS PRIORITY ALGORITHM WEIGHTING
         </h3>
-
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '14px', fontSize: '13px', marginBottom: '16px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: '#00D966', fontWeight: 600 }}>
-            <CheckCircle2 size={18} color="#00D966" /> High production deviation (-17.4% below expected baseline)
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: '#00D966', fontWeight: 600 }}>
-            <CheckCircle2 size={18} color="#00D966" /> Rapid decline rate (2.3% per month acceleration)
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: '#00D966', fontWeight: 600 }}>
-            <CheckCircle2 size={18} color="#00D966" /> Severe anomaly detected (0.94 Isolation Forest score)
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: '#00D966', fontWeight: 600 }}>
-            <CheckCircle2 size={18} color="#00D966" /> High recovery potential (1.24 MMBL AI-identified uplift)
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: '#FF9000', fontWeight: 600 }}>
-            <AlertTriangle size={18} color="#FF9000" /> Moderate complexity (does not block immediate dispatch)
-          </div>
-        </div>
-
-        <p style={{ fontSize: '13px', color: '#B8B3A8', lineHeight: 1.5, backgroundColor: '#111313', padding: '14px', borderRadius: '6px', borderLeft: '3px solid #FF9000', margin: 0 }}>
-          "This asset combines the highest portfolio production loss with the largest AI-proven recovery potential. Intervening on {mockPriorityData.id} can recover up to 1.24 MMBL of crude output, making it the highest ROI intervention target in the basin."
-        </p>
-      </div>
-
-      {/* 5. RECOMMENDED ACTION SECTION */}
-      <div style={{
-        backgroundColor: '#111313',
-        border: '1px solid #FF9000',
-        borderRadius: '10px',
-        padding: '24px',
-        marginBottom: '24px',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        textAlign: 'center',
-        gap: '16px'
-      }}>
-        <div style={{ fontSize: '11px', fontWeight: 800, color: '#FF9000', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
-          RECOMMENDED PRIMARY ACTION
-        </div>
-
-        <button
-          onClick={() => setModalAction('prioritize')}
-          style={{
-            backgroundColor: '#FF9000',
-            color: '#080909',
-            border: 'none',
-            borderRadius: '8px',
-            padding: '16px 36px',
-            fontSize: '16px',
-            fontWeight: 900,
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '12px',
-            boxShadow: '0 6px 20px rgba(255, 144, 0, 0.3)',
-            transition: 'transform 0.15s ease'
-          }}
-        >
-          <Play size={20} /> PRIORITIZE FOR FIELD INVESTIGATION
-        </button>
-        <span style={{ fontSize: '12px', color: '#B8B3A8' }}>Next step: Engage offshore engineering crew & assign diagnostic work order</span>
-
-        <div style={{ display: 'flex', gap: '12px', marginTop: '8px', flexWrap: 'wrap' }}>
-          <button
-            onClick={() => setModalAction('maintenance')}
-            style={{ backgroundColor: '#1A1D1F', border: '1px solid #2A2D30', color: '#F3EFE4', padding: '8px 16px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
-          >
-            Schedule Maintenance
-          </button>
-          <button
-            onClick={() => navigate('/forecast')}
-            style={{ backgroundColor: '#1A1D1F', border: '1px solid #FF9000', color: '#FF9000', padding: '8px 16px', borderRadius: '6px', fontSize: '12px', fontWeight: 700, cursor: 'pointer' }}
-          >
-            Simulate Recovery Scenario
-          </button>
-          <button
-            onClick={() => setModalAction('watchlist')}
-            style={{ backgroundColor: '#1A1D1F', border: '1px solid #2A2D30', color: '#B8B3A8', padding: '8px 16px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
-          >
-            Add to Watchlist
-          </button>
-        </div>
-      </div>
-
-      {/* 6. RANKING CONTEXT, RISKS & SIMILAR CASES GRID */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(12, 1fr)', gap: '24px', marginBottom: '24px' }}>
         
-        {/* RANKING CONTEXT (4 Cols) */}
-        <div style={{ gridColumn: 'span 4', backgroundColor: '#1A1D1F', border: '1px solid #2A2D30', borderRadius: '10px', padding: '20px' }}>
-          <h3 style={{ fontSize: '15px', fontWeight: 800, color: '#F3EFE4', marginBottom: '14px' }}>
-            Portfolio Ranking Context
-          </h3>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            {mockPriorityData.rankingContext.map((item) => (
-              <div
-                key={item.id}
-                style={{
-                  backgroundColor: item.current ? '#FF900015' : '#111313',
-                  border: item.current ? '1px solid #FF9000' : '1px solid #2A2D30',
-                  borderRadius: '6px',
-                  padding: '10px 14px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  fontSize: '12px'
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                  <span style={{ fontWeight: 800, color: item.current ? '#FF9000' : '#B8B3A8' }}>#{item.rank}</span>
-                  <span style={{ fontWeight: 800, color: '#F3EFE4' }}>{item.id}</span>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <span style={{ fontSize: '14px', fontWeight: 900, color: item.score >= 80 ? '#FF3B3B' : '#FFD700' }}>
-                    {item.score}
-                  </span>
-                  {item.current && <span style={{ fontSize: '10px', backgroundColor: '#FF9000', color: '#080909', fontWeight: 800, padding: '2px 6px', borderRadius: '4px' }}>CURRENT</span>}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* RISK FACTORS & FINANCIAL ROI (4 Cols) */}
-        <div style={{ gridColumn: 'span 4', backgroundColor: '#1A1D1F', border: '1px solid #2A2D30', borderRadius: '10px', padding: '20px' }}>
-          <h3 style={{ fontSize: '15px', fontWeight: 800, color: '#F3EFE4', marginBottom: '14px' }}>
-            Risks & Financial ROI
-          </h3>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', fontSize: '12px' }}>
-            <div style={{ backgroundColor: '#111313', padding: '10px', borderRadius: '6px' }}>
-              <div style={{ color: '#B8B3A8', fontSize: '10px', fontWeight: 700 }}>ESTIMATED COST</div>
-              <div style={{ fontSize: '16px', fontWeight: 800, color: '#F3EFE4', marginTop: '2px' }}>{mockPriorityData.risks.financial.cost}</div>
+        <div className="space-y-4">
+          <div className="p-4 bg-dark-bg border border-dark-border rounded font-mono text-center overflow-x-auto print:border-gray-300">
+            <div className="text-sm text-text-secondary mb-2 uppercase tracking-wide">Mathematical Representation</div>
+            <div className="text-base text-text-primary inline-flex gap-2 items-center min-w-max">
+              <span>{formula}</span>
             </div>
-            <div style={{ backgroundColor: '#111313', padding: '10px', borderRadius: '6px' }}>
-              <div style={{ color: '#B8B3A8', fontSize: '10px', fontWeight: 700 }}>EXPECTED RECOVERY VALUE</div>
-              <div style={{ fontSize: '16px', fontWeight: 800, color: '#00D966', marginTop: '2px' }}>{mockPriorityData.risks.financial.expectedValue}</div>
-            </div>
-            <div style={{ backgroundColor: '#111313', padding: '10px', borderRadius: '6px' }}>
-              <div style={{ color: '#B8B3A8', fontSize: '10px', fontWeight: 700 }}>PROJECTED ROI BREAKEVEN</div>
-              <div style={{ fontSize: '14px', fontWeight: 800, color: '#C7F700', marginTop: '2px' }}>{mockPriorityData.risks.financial.roi}</div>
+            <div className="text-lg font-bold text-text-primary mt-4 flex items-center justify-center gap-2">
+              <span>AIPS = </span>
+              <span className="text-accent-amber">5.2 (Loss)</span>
+              <span>+</span>
+              <span className="text-accent-red">4.7 (Anomaly)</span>
+              <span>+</span>
+              <span className="text-accent-green">4.3 (Recovery)</span>
+              <span>-</span>
+              <span className="text-text-secondary">0.6 (Complexity)</span>
+              <span> = </span>
+              <span className="text-accent-red font-extrabold pl-1 text-2xl">{aipsScore}</span>
             </div>
           </div>
-        </div>
-
-        {/* SIMILAR PAST CASES (4 Cols) */}
-        <div style={{ gridColumn: 'span 4', backgroundColor: '#1A1D1F', border: '1px solid #2A2D30', borderRadius: '10px', padding: '20px' }}>
-          <h3 style={{ fontSize: '15px', fontWeight: 800, color: '#F3EFE4', marginBottom: '14px' }}>
-            Similar Past Interventions
-          </h3>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            {mockPriorityData.similarCases.map((c) => (
-              <div key={c.id} style={{ backgroundColor: '#111313', padding: '10px 12px', borderRadius: '6px', border: '1px solid #2A2D30', fontSize: '12px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, color: '#F3EFE4' }}>
-                  <span>{c.id}</span>
-                  <span style={{ color: '#00D966' }}>{c.recovery}</span>
-                </div>
-                <div style={{ fontSize: '10px', color: '#B8B3A8', marginTop: '2px' }}>{c.field} • Cost: {c.cost}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-      </div>
-
-      {/* 7. NEXT STEPS WORKFLOW LOG (BOTTOM) */}
-      <div style={{ backgroundColor: '#111313', border: '1px solid #2A2D30', borderRadius: '10px', padding: '24px' }}>
-        <h3 style={{ fontSize: '16px', fontWeight: 800, color: '#F3EFE4', marginBottom: '16px' }}>
-          Execution & Next Steps Workflow
-        </h3>
-
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px' }}>
-          {mockPriorityData.nextSteps.map((s) => {
-            const isActive = activeStep === s.step;
-            return (
-              <div
-                key={s.step}
-                onClick={() => setActiveStep(s.step)}
-                style={{
-                  backgroundColor: isActive ? '#1A1D1F' : '#080909',
-                  border: `1px solid ${isActive ? '#FF9000' : '#2A2D30'}`,
-                  borderRadius: '8px',
-                  padding: '16px',
-                  cursor: 'pointer',
-                  transition: 'all 0.15s ease'
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <span style={{
-                    width: '24px',
-                    height: '24px',
-                    borderRadius: '50%',
-                    backgroundColor: isActive ? '#FF9000' : '#2A2D30',
-                    color: isActive ? '#080909' : '#F3EFE4',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontWeight: 900,
-                    fontSize: '12px'
-                  }}>
-                    {s.step}
-                  </span>
-                  <span style={{ fontSize: '12px', fontWeight: 800, color: '#F3EFE4' }}>{s.title}</span>
-                </div>
-
-                <div style={{ fontSize: '11px', color: '#B8B3A8', marginTop: '10px' }}>
-                  Assigned: <strong style={{ color: '#F3EFE4' }}>{s.team}</strong>
-                </div>
-                <div style={{ fontSize: '10px', color: '#FF9000', marginTop: '2px' }}>
-                  Timeframe: {s.duration}
-                </div>
-                <p style={{ fontSize: '11px', color: '#B8B3A8', marginTop: '6px', lineHeight: 1.3 }}>
-                  {s.desc}
-                </p>
-              </div>
-            );
-          })}
         </div>
       </div>
 
-      {/* ACTION DIALOG MODAL */}
-      {modalAction && (
-        <div style={{
-          position: 'fixed',
-          top: 0, left: 0, right: 0, bottom: 0,
-          backgroundColor: 'rgba(8, 9, 9, 0.85)',
-          backdropFilter: 'blur(4px)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000
-        }}>
-          <div style={{ backgroundColor: '#1A1D1F', border: '1px solid #FF9000', borderRadius: '10px', width: '420px', padding: '24px' }}>
-            <h2 style={{ fontSize: '18px', fontWeight: 800, color: '#F3EFE4', margin: 0 }}>
-              Confirm Intervention Priority
-            </h2>
-            <p style={{ fontSize: '13px', color: '#B8B3A8', margin: '14px 0' }}>
-              Work order #WO-MH07 generated. Field engineering squad dispatched to Mumbai High North.
+      {/* Detailed analysis grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        
+        {/* Why this Asset Ranks High */}
+        <div className="lg:col-span-2 bg-dark-surface border border-dark-border rounded p-6 space-y-4">
+          <h3 className="text-base font-bold text-text-primary uppercase tracking-wide">
+            Why Prioritize {assetId}?
+          </h3>
+          <ul className="space-y-3">
+            {bullets.map((bullet, idx) => (
+              <li key={idx} className="flex gap-3 text-xs leading-relaxed">
+                <span className="w-5 h-5 rounded-full bg-accent-red bg-opacity-10 border border-accent-red border-opacity-35 text-accent-red font-bold flex items-center justify-center shrink-0 mt-0.5">
+                  !
+                </span>
+                <span className="text-text-primary">{bullet}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        {/* Primary Action Panel */}
+        <div className="bg-dark-surface border border-dark-border rounded p-6 flex flex-col justify-between space-y-4">
+          <div>
+            <h3 className="text-sm font-bold text-text-primary uppercase tracking-wider mb-2">
+              Recommended Intervention Action
+            </h3>
+            <p className="text-xs text-text-secondary leading-relaxed">
+              Based on decision support indices, immediately trigger field diagnostics to clear possible sand blockages.
             </p>
-            <button
-              onClick={() => setModalAction(null)}
-              style={{ width: '100%', backgroundColor: '#FF9000', color: '#080909', border: 'none', padding: '10px', borderRadius: '6px', fontWeight: 800, cursor: 'pointer' }}
-            >
-              Acknowledge Dispatch
-            </button>
+          </div>
+
+          <div className="space-y-3">
+            {investigationRaised ? (
+              <div className="p-3 bg-accent-green bg-opacity-10 border border-accent-green border-opacity-35 rounded text-accent-green text-center text-xs font-semibold flex items-center justify-center gap-2">
+                <CheckCircle size={16} />
+                <span>INVESTIGATION REQUEST TRANSMITTED</span>
+              </div>
+            ) : (
+              <button 
+                onClick={triggerInvestigation}
+                className="w-full bg-accent-red hover:bg-opacity-95 text-white text-xs font-bold uppercase tracking-wider py-3 rounded transition font-mono flex items-center justify-center gap-2 shadow-lg shadow-accent-red shadow-opacity-10"
+              >
+                <span>▶ PRIORITIZE FOR INVESTIGATION</span>
+              </button>
+            )}
+
+            <div className="text-[10px] text-text-secondary text-center font-mono uppercase">
+              Assigned: Field Operations Crew #2B
+            </div>
           </div>
         </div>
-      )}
 
+      </div>
+
+      {/* Accordion Sections: Risk Factors, Resource Allocation & ROI */}
+      <div className="bg-dark-surface border border-dark-border rounded">
+        
+        {/* Financial Accordion Header */}
+        <div 
+          onClick={() => toggleAccordion('financial')}
+          className="p-4 border-b border-dark-border flex justify-between items-center cursor-pointer hover:bg-dark-elevated transition select-none"
+        >
+          <div className="flex items-center gap-2.5">
+            <DollarSign size={16} className="text-accent-green" />
+            <span className="text-sm font-bold text-text-primary uppercase tracking-wider">
+              Financial Breakdown & Expected Recovery ROI
+            </span>
+          </div>
+          {activeAccordion === 'financial' ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+        </div>
+        
+        {/* Financial Accordion Content */}
+        {activeAccordion === 'financial' && (
+          <div className="p-6 bg-dark-bg bg-opacity-50 space-y-6">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="p-4 bg-dark-elevated border border-dark-border rounded">
+                <span className="text-[9px] text-text-secondary font-mono uppercase">Estimated Cost</span>
+                <div className="text-2xl font-bold font-mono text-text-primary mt-1">
+                  ${(financials.interventionCost / 1000000).toFixed(1)}M
+                </div>
+                <span className="text-[10px] text-text-secondary block mt-1 font-sans">Parts, boat hire, & logistics</span>
+              </div>
+              <div className="p-4 bg-dark-elevated border border-dark-border rounded">
+                <span className="text-[9px] text-text-secondary font-mono uppercase">Expected Recovery Yield</span>
+                <div className="text-2xl font-bold font-mono text-accent-green mt-1">
+                  ${(financials.expectedYield / 1000000).toFixed(1)}M
+                </div>
+                <span className="text-[10px] text-text-secondary block mt-1 font-sans">Based on $50/barrel benchmark</span>
+              </div>
+              <div className="p-4 bg-dark-elevated border border-dark-border rounded">
+                <span className="text-[9px] text-text-secondary font-mono uppercase">ROI Multiplier</span>
+                <div className="text-2xl font-bold font-mono text-accent-lime mt-1">
+                  {financials.roiMultiplier}x
+                </div>
+                <span className="text-[10px] text-text-secondary block mt-1 font-sans">Breakeven expected in 3 weeks</span>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-xs">
+              <div className="space-y-2">
+                <h4 className="font-bold text-text-primary uppercase tracking-wider flex items-center gap-1.5">
+                  <Wrench size={14} className="text-accent-amber" />
+                  Required Equipment Allocation
+                </h4>
+                <ul className="space-y-1.5 pl-5 list-disc text-text-secondary">
+                  {financials.equipment.map((item, idx) => (
+                    <li key={idx}>{item}</li>
+                  ))}
+                </ul>
+              </div>
+
+              <div className="space-y-2">
+                <h4 className="font-bold text-text-primary uppercase tracking-wider flex items-center gap-1.5">
+                  <Users size={14} className="text-accent-lime" />
+                  Resource & Manpower Details
+                </h4>
+                <div className="space-y-1 font-mono">
+                  <div className="flex justify-between border-b border-dark-border pb-1">
+                    <span className="text-text-secondary">Personnel needed:</span>
+                    <span className="text-text-primary">{financials.personnelRequired} Technicians</span>
+                  </div>
+                  <div className="flex justify-between border-b border-dark-border pb-1">
+                    <span className="text-text-secondary">Estimated Duration:</span>
+                    <span className="text-text-primary">{financials.durationDays} Days</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-text-secondary">Permits Status:</span>
+                    <span className="text-accent-green">APPROVED</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Similar past cases */}
+        <div 
+          onClick={() => toggleAccordion('cases')}
+          className="p-4 border-t border-dark-border flex justify-between items-center cursor-pointer hover:bg-dark-elevated transition select-none"
+        >
+          <div className="flex items-center gap-2.5">
+            <FileSpreadsheet size={16} className="text-accent-amber" />
+            <span className="text-sm font-bold text-text-primary uppercase tracking-wider">
+              Similar Past Interventions (Reference Records)
+            </span>
+          </div>
+          {activeAccordion === 'cases' ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+        </div>
+
+        {activeAccordion === 'cases' && (
+          <div className="p-6 bg-dark-bg bg-opacity-50 text-xs font-mono">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="p-4 bg-dark-elevated border border-dark-border rounded">
+                <div className="text-[10px] text-text-secondary uppercase">AS-09 (2025)</div>
+                <div className="text-base font-bold mt-1 text-accent-green">+0.92 MMBL RECOVERED</div>
+                <div className="text-[10px] text-text-secondary mt-1">Silt washout project</div>
+              </div>
+              <div className="p-4 bg-dark-elevated border border-dark-border rounded">
+                <div className="text-[10px] text-text-secondary uppercase">CB-08 (2025)</div>
+                <div className="text-base font-bold mt-1 text-accent-green">+1.15 MMBL RECOVERED</div>
+                <div className="text-[10px] text-text-secondary mt-1">Lift gas pressure calibration</div>
+              </div>
+              <div className="p-4 bg-dark-elevated border border-dark-border rounded">
+                <div className="text-[10px] text-text-secondary uppercase">MH-04 (2024)</div>
+                <div className="text-base font-bold mt-1 text-accent-green">+0.67 MMBL RECOVERED</div>
+                <div className="text-[10px] text-text-secondary mt-1">Subsurface valve replacement</div>
+              </div>
+            </div>
+            <div className="mt-4 text-center text-text-secondary text-[11px] font-sans">
+              Average recovery on similar failures is <span className="text-accent-green font-bold">0.91 MMBL</span> (MH-07 predicted potential: 1.24 MMBL).
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Bottom roadmap timeline steps */}
+      <div className="bg-dark-surface border border-dark-border rounded p-6">
+        <h3 className="text-sm font-bold text-text-primary uppercase tracking-wider mb-4">
+          Operational Roadmap / Next Steps
+        </h3>
+        
+        <div className="grid grid-cols-1 sm:grid-cols-5 gap-4 text-center">
+          <div className="p-3 bg-dark-elevated border border-dark-border rounded flex flex-col justify-between">
+            <div className="text-[10px] text-text-secondary font-mono">STEP 1</div>
+            <div className="text-xs font-bold text-text-primary mt-2">Field Crew Dispatch</div>
+            <div className="text-[10px] text-accent-green mt-1">SCHEDULED</div>
+          </div>
+          <div className="p-3 bg-dark-elevated border border-dark-border rounded flex flex-col justify-between">
+            <div className="text-[10px] text-text-secondary font-mono">STEP 2</div>
+            <div className="text-xs font-bold text-text-primary mt-2">Site Diagnostic</div>
+            <div className="text-[10px] text-text-secondary mt-1">PENDING DISPATCH</div>
+          </div>
+          <div className="p-3 bg-dark-elevated border border-dark-border rounded flex flex-col justify-between">
+            <div className="text-[10px] text-text-secondary font-mono">STEP 3</div>
+            <div className="text-xs font-bold text-text-primary mt-2">Safety Isolations</div>
+            <div className="text-[10px] text-text-secondary mt-1">AWAITING DIAGNOSTICS</div>
+          </div>
+          <div className="p-3 bg-dark-elevated border border-dark-border rounded flex flex-col justify-between">
+            <div className="text-[10px] text-text-secondary font-mono">STEP 4</div>
+            <div className="text-xs font-bold text-text-primary mt-2">Choke Valve Swap</div>
+            <div className="text-[10px] text-text-secondary mt-1">PARTS ALLOCATED</div>
+          </div>
+          <div className="p-3 bg-dark-elevated border border-dark-border rounded flex flex-col justify-between">
+            <div className="text-[10px] text-text-secondary font-mono">STEP 5</div>
+            <div className="text-xs font-bold text-text-primary mt-2">Post-Intervention Review</div>
+            <div className="text-[10px] text-text-secondary mt-1">1 WEEK WINDOW</div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 };
