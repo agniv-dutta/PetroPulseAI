@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import { RecoveryOpportunityCard } from '../components/RecoveryOpportunityCard';
 import { AIPSBreakdown } from '../components/AIPSBreakdown';
+import { SHAPExplanationCard } from '../components/SHAPExplanationCard';
 import { calculateAIPS } from '../utils/aipsCalculator';
 import { useAssetData } from '../hooks/useAssetData';
 
@@ -441,29 +442,18 @@ export const AssetDetail: React.FC = () => {
           
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(450px, 1fr))', gap: '24px' }}>
             
-            {/* a) SHAP Contribution Horizontal Bar Chart */}
-            <div style={{ backgroundColor: '#1A1D1F', border: '1px solid #2A2D30', borderRadius: '8px', padding: '20px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                <div>
-                  <h3 style={{ fontSize: '15px', fontWeight: 700, color: '#F3EFE4', margin: 0 }}>Production Deviation Attribution (SHAP Values)</h3>
-                  <span style={{ fontSize: '11px', color: '#B8B3A8' }}>Feature Contributions to -17.4% Loss</span>
-                </div>
-              </div>
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                {asset.shapFactors.map((item, idx) => (
-                  <div key={idx}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', marginBottom: '4px' }}>
-                      <span style={{ color: '#F3EFE4', fontWeight: 600 }}>{item.factor}</span>
-                      <span style={{ color: '#FF9000', fontWeight: 800 }}>{item.impact} ({item.pct}%)</span>
-                    </div>
-                    <div style={{ backgroundColor: '#111313', borderRadius: '4px', height: '10px', width: '100%', overflow: 'hidden' }}>
-                      <div style={{ width: `${item.pct}%`, backgroundColor: '#FF9000', height: '100%', borderRadius: '4px' }}></div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
+            <SHAPExplanationCard
+              asset_id={asset.id}
+              production_deviation_percent={asset.deviation}
+              top_features={asset.shapFactors.map(f => ({
+                feature_name: f.factor,
+                contribution_percent: f.pct,
+                value: f.pct,
+                baseline_value: 0,
+              }))}
+              model_type="Isolation Forest"
+              model_confidence={0.87}
+            />
 
             {/* b) Recovery Opportunity Card (Estimated, with confidence breakdown) */}
             <RecoveryOpportunityCard
