@@ -206,3 +206,39 @@ Design decisions:
 | 13 | Demo optimization | golden-path warm cache, seed determinism, startup script, demo script doc |
 
 **Execution rule:** each stage completes and verifies before the next begins. No existing frontend functionality is removed; integration is additive behind an API layer.
+
+---
+
+## 13. Implementation Log (post-execution addendum)
+
+All 14 stages executed. A second concurrent agent produced a parallel scaffold mid-run; a hybrid merge was performed per owner decision.
+
+### Delivered backend (`backend/`)
+| Layer | Modules |
+|---|---|
+| Entry | `app/main.py` — FastAPI app, lifespan (seed + ML warm-up), CORS, `/health`, WS `/ws/simulation/{id}`, structured logging |
+| Config/DB | `app/core/config.py` (pydantic-settings), `app/core/database.py` (SQLAlchemy, SQLite default, `DATABASE_URL` swap to Postgres/Timescale) |
+| Models | `assets`, `monthly_production` (with REAL/SYNTHETIC/DERIVED provenance FK), `provenance_records`, `forecast_runs`, `anomaly_events`, `score_runs`, `simulation_sessions`, `model_registry`; Alembic initial migration (`migrations/versions/*_initial_schema.py`) |
+| Ingestion | `catalog.py` (12-asset canonical portfolio + deterministic Arps-seeded 36-month history with injected MH-07 anomaly), `preprocess.py`, plus adopted `data/data_loader.py`, `data/preprocessor.py` |
+| ML | `ml/arps.py` (scipy curve fit, EUR), `ml/anomaly.py` (Isolation Forest, frontend severity bands, ROC-AUC eval), `ml/forecast.py` (GBM lag/calendar features, recursive rollout + Arps blend, rolling-origin backtest MAE/RMSE/R²/MAPE), adopted `ml/performance_metrics.py` |
+| Intelligence | `intelligence/aips.py` (formula parity with TS: 0.35/0.25/0.40/−0.10), `recovery.py`, `attribution.py` (SHAP TreeExplainer), `pipeline.py` (cached portfolio analysis, persists ScoreRun/AnomalyEvent/ForecastRun) |
+| Simulation | `engine.py` (port of TS generator: seasonal × Box–Muller noise, 4 scripted scenarios), `ws.py` (multi-client hub, loop-safe task spawn) |
+| REST | `/api/v1`: assets, history, leaderboard, asset detail, forecast, anomalies(+status PATCH), attribution, priority, ranking, portfolio summary, provenance sources, model registry (+retrain), simulation sessions/scenarios |
+
+### Hybrid merge decisions (second agent's work)
+**Adopted:** structured logger (`utils/logger.py`, wired into main), Alembic env + initial migration, `requirements-dev.txt`, `.env.example`, `Dockerfile`, `data/data_loader.py`, `data/preprocessor.py`, `ml/performance_metrics.py`, `models/enums.py`, `models/schemas.py` (pydantic v2, fixed broken v1 import in validators).
+**Removed (conflicting duplicates):** parallel routers (`api/v1/{health,metrics,aips,anomaly,shap,simulation,websocket}.py`), `services/*`, `ml_tasks/*`, duplicate ML wrappers (`ml/{*_model,model_manager,shap_explainer}.py`), `data/sample_assets.py` (its seeding produced collapsed dates and fought the verified catalog seeder). Redis/Celery cache kept as strictly-optional no-op without the package.
+
+### Frontend changes
+- `src/api/client.ts` — typed fetch client (timeouts, null-on-failure so pages fall back to mocks); `src/api/hooks.ts` — `useApiData`, `useSimulationSocket`.
+- Vite dev proxy for `/api`, `/ws`, `/health`; nginx proxy config for Docker.
+- Live integration: Dashboard (portfolio KPIs/trend/anomalies + BACKEND LIVE badge), Asset Leaderboard (AIPS-ranked server rows), Simulation Center (backend WebSocket session, local fallback on pause/offline).
+- All other pages untouched; `npm run build` + oxlint clean.
+
+### Verification
+- `pytest`: **25 passed** (Arps analytics, AIPS parity, anomaly detection, 13 API contract tests incl. simulation lifecycle & invalid-input rejection).
+- Live checks: health, leaderboard ordering, portfolio trend (12 pts), forecast bands, SHAP attribution, provenance policy, WebSocket telemetry ticks with scenario switching.
+- Docker: root compose builds backend (healthcheck) + nginx-served frontend.
+
+### Demo
+`run_demo.ps1` boots backend+frontend, waits for health, opens browser, prints golden-path tour.

@@ -39,15 +39,24 @@ Historical Data (OGD, PPAC, DGH) ↓ Ingestion Layer (Python ETL) ↓ Data Lake 
 # Clone repo
 git clone https://github.com/[team]/petropulse-ai.git
 
+# Backend (FastAPI + SQLite by default)
+python -m venv .venv
+.venv\Scripts\pip install -r backend/requirements.txt
+cd backend
+..\.venv\Scripts\python -m uvicorn app.main:app --port 8000
+# API docs: http://localhost:8000/docs
+
 # Frontend
 cd frontend
 npm install
-npm run dev
+npm run dev   # http://localhost:5173 (proxies /api and /ws to :8000)
+```
 
-# Backend
-cd backend
-pip install -r requirements.txt
-python -m uvicorn main:app --reload
+Or with Docker:
+
+```bash
+docker compose up --build
+# frontend: http://localhost:8080  |  backend: http://localhost:8000/docs
 ```
 
 ## Demo Flow
