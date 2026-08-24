@@ -5,12 +5,12 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.v1 import assets, forecast, intel, system
+from app.api.v1 import assets, data, forecast, intel, simulation, system
 from app.core.config import settings
 from app.core.database import SessionLocal, init_db
 from app.ingestion.seed import seed_database
 from app.intelligence.pipeline import warm_cache
-from app.simulation.ws import hub
+from app.services.simulation_service import get_simulation_service
 from app.utils.logger import setup_logger
 
 logger = setup_logger("petropulse")
@@ -18,7 +18,7 @@ logger = setup_logger("petropulse")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    hub.bind_loop()
+    get_simulation_service()
     init_db()
     db = SessionLocal()
     try:
@@ -30,8 +30,7 @@ async def lifespan(app: FastAPI):
     finally:
         db.close()
     yield
-    for session_id in list(hub.sessions.keys()):
-        await hub.remove_session(session_id)
+    await get_simulation_service().shutdown_all()
 
 
 app = FastAPI(
@@ -51,9 +50,11 @@ app.add_middleware(
 )
 
 app.include_router(assets.router, prefix=settings.api_v1_prefix)
+app.include_router(data.router, prefix=settings.api_v1_prefix)
 app.include_router(forecast.router, prefix=settings.api_v1_prefix)
 app.include_router(intel.router, prefix=settings.api_v1_prefix)
 app.include_router(system.router, prefix=settings.api_v1_prefix)
+app.include_router(simulation.router, prefix=settings.api_v1_prefix)
 
 
 @app.get("/health", tags=["system"])
@@ -62,35 +63,38 @@ def health() -> dict:
         "status": "ok",
         "service": settings.app_name,
         "version": settings.version,
-        "active_simulations": len(hub.sessions),
+        "active_simulations": get_simulation_service().active_count,
     }
 
 
 @app.websocket("/ws/simulation/{session_id}")
 async def simulation_ws(websocket: WebSocket, session_id: str) -> None:
+    service = get_simulation_service()
     await websocket.accept()
-    session = hub.get(session_id)
-    if not session:
+    if not service.get(session_id):
         await websocket.send_json({"type": "error", "message": f"unknown session {session_id}"})
         await websocket.close(code=4404)
         return
 
-    session.clients.add(websocket)
+    await service.attach(websocket, session_id)
     try:
         while True:
             message = await websocket.receive_text()
             if message.startswith("SET_SCENARIO:"):
                 scenario = message.split(":", 1)[1]
-                hub.set_scenario(session_id, scenario)
-                await websocket.send_json({
-                    "type": "scenario_changed", "data": {"scenario": scenario},
-                })
+                snap = await service.set_scenario(session_id, scenario)
+                if snap:
+                    await websocket.send_json({
+                        "type": "scenario_changed", "data": {"scenario": scenario},
+                    })
+                else:
+                    await websocket.send_json({"type": "error", "message": "unknown session"})
             elif message == "PING":
                 await websocket.send_json({"type": "pong"})
     except WebSocketDisconnect:
         pass
     finally:
-        session.clients.discard(websocket)
+        service.detach(websocket, session_id)
 
 
 if __name__ == "__main__":

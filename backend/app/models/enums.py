@@ -57,3 +57,23 @@ class ScenarioType(str, Enum):
     DECLINE_ACCELERATION = "DECLINE_ACCELERATION"
     MARKET_DISRUPTION = "MARKET_DISRUPTION"
     REGULATORY_CHANGE = "REGULATORY_CHANGE"
+
+
+# Canonical alias used by the database layer for source_type columns.
+SourceType = DataSource
+
+
+class SimulationStatus(str, Enum):
+    """Simulation session lifecycle status."""
+    RUNNING = "RUNNING"
+    PAUSED = "PAUSED"
+    STOPPED = "STOPPED"
+    COMPLETED = "COMPLETED"
+
+
+class ValveStatus(str, Enum):
+    """Valve operating state reported by telemetry."""
+    OPEN = "OPEN"
+    CLOSED = "CLOSED"
+    THROTTLED = "THROTTLED"
+    UNKNOWN = "UNKNOWN"

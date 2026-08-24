@@ -5,8 +5,7 @@ from sklearn.metrics import (
     mean_absolute_error,
     mean_squared_error,
     r2_score,
-    mean_absolute_percentage_error,
-    precision_score,
+        precision_score,
     recall_score,
     f1_score,
     roc_auc_score,
@@ -18,13 +17,27 @@ class PerformanceMetrics:
     """Calculator for ML model performance metrics."""
 
     @staticmethod
+    def mape(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+        """Zero-safe Mean Absolute Percentage Error (percent).
+
+        sklearn's mean_absolute_percentage_error explodes when any actual is 0;
+        we guard with a small epsilon so sparse/zero production days do not
+        produce infinite scores.
+        """
+        y_true = np.asarray(y_true, dtype=float)
+        y_pred = np.asarray(y_pred, dtype=float)
+        return float(np.mean(np.abs((y_true - y_pred) / np.maximum(np.abs(y_true), 1e-9))) * 100.0)
+
+    @staticmethod
     def regression_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, float]:
         """Calculate regression metrics."""
+        y_true = np.asarray(y_true, dtype=float)
+        y_pred = np.asarray(y_pred, dtype=float)
         return {
             "mae": round(float(mean_absolute_error(y_true, y_pred)), 4),
             "rmse": round(float(np.sqrt(mean_squared_error(y_true, y_pred))), 4),
             "r2": round(float(r2_score(y_true, y_pred)), 4),
-            "mape": round(float(mean_absolute_percentage_error(y_true, y_pred) * 100), 4),
+            "mape": round(PerformanceMetrics.mape(y_true, y_pred), 4),
             "max_error": round(float(np.max(np.abs(y_true - y_pred))), 4),
             "mean_error": round(float(np.mean(y_true - y_pred)), 4),
         }

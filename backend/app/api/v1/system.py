@@ -1,5 +1,6 @@
-"""Provenance, model registry, portfolio summary and simulation REST control."""
+"""Data-source catalogue, model registry, portfolio summary and simulation control."""
 
+import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -9,30 +10,27 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.intelligence.pipeline import get_portfolio_analysis
-from app.models import ModelRegistryEntry, ProvenanceRecord
-from app.simulation.engine import ANOMALY_SCENARIOS
-from app.simulation.ws import hub
+from app.models import DataSource, ModelVersion, ProductionHistory
 
 router = APIRouter(tags=["system"])
 
-SCENARIO_IDS = sorted(ANOMALY_SCENARIOS.keys())
 
 
 @router.get("/provenance/sources")
 def provenance_sources(db: Session = Depends(get_db)) -> dict:
-    rows = db.execute(select(ProvenanceRecord)).scalars().all()
+    rows = db.execute(select(DataSource).order_by(DataSource.source_name)).scalars().all()
     return {
         "rows": [
             {
-                "id": r.id,
+                "id": str(r.id),
                 "datasetName": r.dataset_name,
-                "publisher": r.publisher,
-                "dataClass": r.data_class,
+                "publisher": r.source_name,
+                "dataClass": r.source_type,
                 "url": r.url,
-                "ingestedAt": r.ingested_at.isoformat(),
-                "recordCount": r.record_count,
-                "integrityScore": r.integrity_score,
-                "notes": r.notes,
+                "coverage": r.coverage,
+                "updateFrequency": r.update_frequency,
+                "ingestedAt": r.last_updated.isoformat(),
+                "notes": r.description,
             }
             for r in rows
         ],
@@ -45,12 +43,18 @@ def provenance_sources(db: Session = Depends(get_db)) -> dict:
 
 @router.get("/models")
 def list_models(db: Session = Depends(get_db)) -> dict:
-    rows = db.execute(select(ModelRegistryEntry).order_by(ModelRegistryEntry.id)).scalars().all()
+    rows = db.execute(select(ModelVersion).order_by(ModelVersion.code)).scalars().all()
     return {
         "rows": [
             {
-                "id": m.id, "name": m.name, "task": m.task, "algorithm": m.algorithm,
-                "trainedAt": m.trained_at.isoformat(), "metrics": m.metrics, "status": m.status,
+                "id": m.code,
+                "name": m.model_name,
+                "version": m.version,
+                "task": m.task,
+                "algorithm": m.algorithm,
+                "registeredAt": m.registered_at.isoformat(),
+                "metrics": m.hyperparameters,
+                "status": m.status,
             }
             for m in rows
         ]
@@ -63,7 +67,9 @@ class RetrainRequest(BaseModel):
 
 @router.post("/models/{model_id}/retrain")
 def retrain_model(model_id: str, payload: RetrainRequest, db: Session = Depends(get_db)) -> dict:
-    entry = db.get(ModelRegistryEntry, model_id)
+    entry = db.execute(
+        select(ModelVersion).where(ModelVersion.code == model_id)
+    ).scalars().first()
     if not entry:
         raise HTTPException(404, f"unknown model {model_id}")
     from app.core.database import SessionLocal
@@ -74,14 +80,14 @@ def retrain_model(model_id: str, payload: RetrainRequest, db: Session = Depends(
         assets_analyzed = warm_cache(db_session)
     finally:
         db_session.close()
-    entry.trained_at = datetime.now(timezone.utc)
+    entry.registered_at = datetime.now(timezone.utc)
     entry.status = "READY"
     db.commit()
     return {
         "model_id": model_id,
         "status": "RETRAINED",
         "assets_analyzed": assets_analyzed,
-        "completed_at": entry.trained_at.isoformat(),
+        "completed_at": entry.registered_at.isoformat(),
     }
 
 
@@ -106,7 +112,7 @@ def portfolio_summary(db: Session = Depends(get_db)) -> dict:
                 "period": w["period"],
             })
 
-    trend_points = _portfolio_trend(ranked)
+    trend_points = _portfolio_trend()
     return {
         "totalAssets": len(ranked),
         "activeAssets": len(active),
@@ -123,34 +129,46 @@ def portfolio_summary(db: Session = Depends(get_db)) -> dict:
     }
 
 
-def _portfolio_trend(ranked: list[dict]) -> list[dict]:
-    """Aggregate last-12-month actual vs expected across analysed assets."""
-    from sqlalchemy import func
+def _portfolio_trend() -> list[dict]:
+    """Aggregate monthly actual vs seasonal-Arps expectation across assets."""
+    from app.ingestion.seed import expected_series
 
     from app.core.database import SessionLocal
-    from app.models import MonthlyProduction
 
     session = SessionLocal()
     try:
         rows = session.execute(
             select(
-                MonthlyProduction.period,
-                func.sum(MonthlyProduction.oil_bbl_d).label("actual"),
-                func.sum(MonthlyProduction.expected_bbl_d).label("expected"),
-            )
-            .group_by(MonthlyProduction.period)
-            .order_by(MonthlyProduction.period.desc())
-            .limit(12)
+                ProductionHistory.asset_id,
+                ProductionHistory.timestamp,
+                ProductionHistory.production,
+            ).order_by(ProductionHistory.timestamp.asc())
         ).all()
     finally:
         session.close()
+
+    by_asset: dict[str, list[tuple[datetime, float]]] = {}
+    for asset_id, ts, production in rows:
+        by_asset.setdefault(asset_id, []).append((ts, production))
+
+    monthly_actual: dict[str, float] = {}
+    monthly_expected: dict[str, float] = {}
+    for asset_id, series in by_asset.items():
+        timestamps = [ts for ts, _ in series]
+        expected_values = expected_series(asset_id, timestamps)
+        for (ts, production), exp in zip(series, expected_values):
+            key = ts.strftime("%Y-%m")
+            monthly_actual[key] = monthly_actual.get(key, 0.0) + float(production)
+            monthly_expected[key] = monthly_expected.get(key, 0.0) + float(exp)
+
+    keys = sorted(monthly_actual)[-12:]
     return [
         {
-            "period": r.period.isoformat(),
-            "actual": round(float(r.actual or 0) / 1000.0, 2),
-            "expected": round(float(r.expected or 0) / 1000.0, 2),
+            "period": f"{key}-01",
+            "actual": round(monthly_actual[key] / 1000.0, 2),
+            "expected": round(monthly_expected.get(key, 0.0) / 1000.0, 2),
         }
-        for r in reversed(rows)
+        for key in keys
     ]
 
 
@@ -160,34 +178,53 @@ class SimulationStartRequest(BaseModel):
     scenario: str = Field(default="NORMAL")
 
 
-@router.get("/simulation/scenarios")
-def scenarios() -> list[dict]:
-    return [
-        {"id": sid, **{"description": spec.description}}
-        for sid, spec in ANOMALY_SCENARIOS.items()
-    ]
-
-
 @router.post("/simulation/sessions")
-def start_session(payload: SimulationStartRequest) -> dict:
-    import uuid
+async def start_session(payload: SimulationStartRequest, db: Session = Depends(get_db)) -> dict:
+    from app.services.simulation_service import (
+        get_simulation_service,
+        VALID_SCENARIO_LABELS,
+    )
 
-    if payload.scenario not in ANOMALY_SCENARIOS:
-        raise HTTPException(422, f"scenario must be one of {SCENARIO_IDS}")
-    session_id = uuid.uuid4().hex[:12]
-    session = hub.create_session(session_id, payload.asset_id, payload.scenario)
-    return {"session_id": session_id, **session.snapshot()}
+    if payload.scenario.upper() not in [v.upper() for v in VALID_SCENARIO_LABELS]:
+        raise HTTPException(422, f"scenario must be one of {sorted(set(VALID_SCENARIO_LABELS))}")
+    from app.models import Asset
+
+    asset_exists = db.execute(
+        select(Asset).where(Asset.asset_id == payload.asset_id).limit(1)
+    ).scalar()
+    if not asset_exists:
+        raise HTTPException(404, f"unknown asset {payload.asset_id}")
+
+    try:
+        return await get_simulation_service().start(
+            asset_id=payload.asset_id,
+            scenario=payload.scenario,
+            speed_multiplier=1.0,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+    except KeyError as exc:
+        raise HTTPException(404, str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(429, str(exc))
 
 
 @router.patch("/simulation/sessions/{session_id}")
-def update_session(session_id: str, scenario: str) -> dict:
-    snap = hub.set_scenario(session_id, scenario)
-    if not snap:
+async def update_session(session_id: str, scenario: str) -> dict:
+    from app.services.simulation_service import get_simulation_service
+
+    try:
+        snap = await get_simulation_service().set_scenario(session_id, scenario)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+    if snap is None:
         raise HTTPException(404, f"unknown session {session_id}")
     return snap
 
 
 @router.delete("/simulation/sessions/{session_id}")
 async def stop_session(session_id: str) -> dict:
-    await hub.remove_session(session_id)
+    from app.services.simulation_service import get_simulation_service
+
+    await get_simulation_service().stop(session_id)
     return {"stopped": session_id}

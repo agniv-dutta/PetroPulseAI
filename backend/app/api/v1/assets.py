@@ -5,23 +5,39 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.ingestion.catalog import CANONICAL_ASSETS
 from app.intelligence.pipeline import analyze_asset, get_portfolio_analysis
-from app.models import Asset, MonthlyProduction
+from app.models import Asset, ProductionHistory
 
 router = APIRouter(prefix="/assets", tags=["assets"])
+
+_CATALOG_BY_CODE = {a["id"]: a for a in CANONICAL_ASSETS}
+
+
+def _get_asset(db: Session, asset_id: str) -> Asset | None:
+    return db.execute(
+        select(Asset).where(Asset.asset_id == asset_id)
+    ).scalars().first()
 
 
 @router.get("")
 def list_assets(db: Session = Depends(get_db)) -> list[dict]:
-    assets = db.execute(select(Asset).order_by(Asset.id)).scalars().all()
-    return [
-        {
-            "id": a.id, "name": a.name, "field": a.field, "basin": a.basin,
-            "latitude": a.latitude, "longitude": a.longitude,
-            "status": a.status, "onstream_year": a.onstream_year,
-        }
-        for a in assets
-    ]
+    assets = db.execute(select(Asset).order_by(Asset.asset_id)).scalars().all()
+    rows = []
+    for a in assets:
+        spec = _CATALOG_BY_CODE.get(a.asset_id, {})
+        rows.append({
+            "id": a.asset_id,
+            "uuid": str(a.id),
+            "name": spec.get("name", f"{a.field_name} {a.asset_id}"),
+            "field": a.field_name,
+            "basin": a.basin,
+            "latitude": a.latitude,
+            "longitude": a.longitude,
+            "status": a.status,
+            "onstream_year": spec.get("onstream_year"),
+        })
+    return rows
 
 
 @router.get("/leaderboard")
@@ -65,33 +81,39 @@ def asset_history(
     months: int = Query(24, ge=6, le=120),
     db: Session = Depends(get_db),
 ) -> list[dict]:
-    asset = db.get(Asset, asset_id)
-    if not asset:
+    if not _get_asset(db, asset_id):
         raise HTTPException(404, f"unknown asset {asset_id}")
+    from app.ingestion.seed import expected_series
+
     rows = (
         db.execute(
-            select(MonthlyProduction)
-            .where(MonthlyProduction.asset_id == asset_id)
-            .order_by(MonthlyProduction.period.desc())
+            select(ProductionHistory)
+            .where(ProductionHistory.asset_id == asset_id)
+            .order_by(ProductionHistory.timestamp.desc())
             .limit(months)
         ).scalars().all()
     )[::-1]
-    return [
-        {
-            "period": r.period.isoformat(),
-            "actual": r.oil_bbl_d,
-            "expected": r.expected_bbl_d,
-            "gas_mmcf_d": r.gas_mmcf_d,
-            "waterCutPct": r.water_cut_pct,
-            "source": r.source,
-        }
-        for r in rows
-    ]
+    expected_values = expected_series(
+        asset_id, [r.timestamp for r in rows]
+    ) if rows else []
+    output = []
+    for r, exp in zip(rows, expected_values):
+        output.append({
+            "period": r.timestamp.date().isoformat(),
+            "actual": r.production,
+            "expected": round(exp, 1),
+            "pressure_bar": r.pressure,
+            "temperature_c": r.temperature,
+            "flowRate": r.flow_rate,
+            "valveStatus": r.valve_status,
+            "source": r.source_type,
+        })
+    return output
 
 
 @router.get("/{asset_id}")
 def asset_detail(asset_id: str, db: Session = Depends(get_db)) -> dict:
-    asset = db.get(Asset, asset_id)
+    asset = _get_asset(db, asset_id)
     if not asset:
         raise HTTPException(404, f"unknown asset {asset_id}")
     analysis = analyze_asset(db, asset)
