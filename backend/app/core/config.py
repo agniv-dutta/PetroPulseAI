@@ -37,6 +37,18 @@ class Settings(BaseSettings):
 
     simulation_tick_seconds: float = 2.0
     simulation_max_sessions: int = 16
+    simulation_duration_default_ticks: int = 600
+
+    # Decision-intelligence configuration (backend is the single source of truth)
+    aips_priority_thresholds: dict[str, float] = {
+        "CRITICAL": 80.0,
+        "HIGH": 60.0,
+        "MEDIUM": 40.0,
+    }
+    # Raw weighted AIPS sum at which the presented score equals 100.
+    # 27.72 / 30 x 100 ~= 92 reproduces the approved MH-07 reference scenario.
+    aips_scale_reference: float = 30.0
+    recovery_historical_rate: float = 0.80
 
 
 @lru_cache

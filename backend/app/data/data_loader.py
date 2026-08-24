@@ -1,179 +1,336 @@
-"""Data loader for loading production data from various sources."""
+"""Unified data ingestion interface for PetroPulse AI.
+
+Accepts REAL historical data, SYNTHETIC simulation output and DERIVED feature
+sets from CSV files, JSON payloads or in-memory Pandas DataFrames, and
+normalises everything into the canonical standard schema:
+
+    required : asset_id, timestamp, production, source, source_type
+    optional : pressure, temperature, flow_rate, valve_status
+
+Design rules
+------------
+- Source-agnostic: public Indian datasets (OGD / PPAC / DGH / state portals /
+  operator disclosures) are ingested through a configurable column map plus a
+  generic alias table. No single source is hardcoded.
+- Provenance is never guessed: `source_type` must either be present as a
+  column or be declared explicitly by the caller (`default_source_type`).
+  Anything outside REAL | SYNTHETIC | DERIVED is rejected.
+- REAL DATA RULE: operational fields absent from the source dataset remain
+  NULL. This layer NEVER fabricates pressure/temperature/flow values —
+  synthetic telemetry is generated exclusively by the simulation pipeline
+  (app/simulation/engine.py) and tagged SYNTHETIC at the point of creation.
+"""
+
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Mapping, Sequence
 
 import pandas as pd
-from datetime import date, datetime, timedelta, timezone
-from typing import Optional
-from sqlalchemy.orm import Session
 
-from app.models import Asset, MonthlyProduction
 from app.utils.logger import logger
 
+REQUIRED_COLUMNS = ("asset_id", "timestamp", "production", "source", "source_type")
+OPTIONAL_COLUMNS = ("pressure", "temperature", "flow_rate", "valve_status")
+STANDARD_COLUMNS = REQUIRED_COLUMNS + OPTIONAL_COLUMNS
+SOURCE_TYPES = ("REAL", "SYNTHETIC", "DERIVED")
 
-class DataLoader:
-    """Loader for production data from database and external sources."""
+# Generic aliases so heterogeneous public datasets can be mapped without
+# hardcoding any single publisher. Unit-bearing variants listed here match our
+# canonical units only (bbl/d, bar, degC); other units must be converted via
+# DataPreprocessor(unit_conversions=...) or mapped explicitly. Explicit
+# `column_map` always wins over this table.
+COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
+    "asset_id": (
+        "asset_id", "asset", "asset_code", "assetcode", "code", "well",
+        "well_id", "wellcode", "well_code", "field_asset_id", "block_id",
+    ),
+    "timestamp": (
+        "timestamp", "date", "period", "time", "observation_date",
+        "observation_time", "month", "reporting_date", "prod_date",
+        "production_date",
+    ),
+    "production": (
+        "production", "production_bbl_d", "oil_bbl_d", "oil_production",
+        "oil_rate", "oil_bopd", "bbl_d", "net_production",
+        "crude_oil_production", "oil_rate_bbl_d",
+    ),
+    "source": ("source", "dataset", "origin", "publisher"),
+    "source_type": ("source_type", "data_class", "provenance", "provenance_class"),
+    "pressure": ("pressure", "pressure_bar", "casing_pressure", "tubing_pressure"),
+    "temperature": ("temperature", "temperature_c", "temp", "temp_c"),
+    "flow_rate": ("flow_rate", "flow_rate_bbl_d", "liquid_rate", "total_liquid", "gross_fluid"),
+    "valve_status": ("valve_status", "valve", "valve_state", "valve_position"),
+}
 
-    @staticmethod
-    def load_asset_production(
-        db: Session,
-        asset_id: str,
-        start_date: Optional[date] = None,
-        end_date: Optional[date] = None,
-        limit: Optional[int] = None,
-    ) -> pd.DataFrame:
-        """Load production data for an asset into a DataFrame."""
-        from sqlalchemy import select
-        
-        stmt = select(MonthlyProduction).where(MonthlyProduction.asset_id == asset_id)
-        
-        if start_date:
-            stmt = stmt.where(MonthlyProduction.period >= start_date)
-        if end_date:
-            stmt = stmt.where(MonthlyProduction.period <= end_date)
-        
-        stmt = stmt.order_by(MonthlyProduction.period)
-        
-        if limit:
-            stmt = stmt.limit(limit)
-        
-        production_data = list(db.execute(stmt).scalars().all())
-        
-        if not production_data:
-            logger.warning(f"No production data found for asset {asset_id}")
-            return pd.DataFrame()
-        
-        data = [
-            {
-                "period": p.period,
-                "oil_bbl_d": p.oil_bbl_d,
-                "expected_bbl_d": p.expected_bbl_d,
-                "gas_mmcf_d": p.gas_mmcf_d,
-                "water_cut_pct": p.water_cut_pct,
-                "source": p.source,
-            }
-            for p in production_data
-        ]
-        
-        df = pd.DataFrame(data)
-        df["period"] = pd.to_datetime(df["period"])
-        df = df.sort_values("period")
-        
-        logger.info(f"Loaded {len(df)} production records for asset {asset_id}")
-        return df
 
-    @staticmethod
-    def load_portfolio_production(
-        db: Session,
-        start_date: Optional[date] = None,
-        end_date: Optional[date] = None,
-    ) -> pd.DataFrame:
-        """Load production data for all assets into a DataFrame."""
-        from sqlalchemy import select
-        
-        stmt = select(MonthlyProduction, Asset).join(Asset)
-        
-        if start_date:
-            stmt = stmt.where(MonthlyProduction.period >= start_date)
-        if end_date:
-            stmt = stmt.where(MonthlyProduction.period <= end_date)
-        
-        stmt = stmt.order_by(MonthlyProduction.period)
-        
-        results = db.execute(stmt).all()
-        
-        if not results:
-            logger.warning("No production data found for portfolio")
-            return pd.DataFrame()
-        
-        data = []
-        for production, asset in results:
-            data.append({
-                "asset_id": asset.id,
-                "asset_name": asset.name,
-                "field": asset.field,
-                "basin": asset.basin,
-                "period": production.period,
-                "oil_bbl_d": production.oil_bbl_d,
-                "expected_bbl_d": production.expected_bbl_d,
-                "gas_mmcf_d": production.gas_mmcf_d,
-                "water_cut_pct": production.water_cut_pct,
-                "source": production.source,
-            })
-        
-        df = pd.DataFrame(data)
-        df["period"] = pd.to_datetime(df["period"])
-        df = df.sort_values(["asset_id", "period"])
-        
-        logger.info(f"Loaded {len(df)} production records for portfolio")
-        return df
+class IngestionError(ValueError):
+    """Raised when input data cannot be unambiguously normalised."""
 
-    @staticmethod
-    def load_asset_metadata(db: Session, asset_id: str) -> Optional[dict]:
-        """Load asset metadata."""
-        asset = db.get(Asset, asset_id)
-        if not asset:
-            logger.warning(f"Asset {asset_id} not found")
-            return None
-        
-        return {
-            "id": asset.id,
-            "name": asset.name,
-            "field": asset.field,
-            "basin": asset.basin,
-            "latitude": asset.latitude,
-            "longitude": asset.longitude,
-            "onstream_year": asset.onstream_year,
-            "status": asset.status,
-            "baseline_qi": asset.baseline_qi,
-            "baseline_di": asset.baseline_di,
-            "baseline_b": asset.baseline_b,
-            "operating_cost_usd_m": asset.operating_cost_usd_m,
-            "intervention_cost_usd_m": asset.intervention_cost_usd_m,
-        }
 
-    @staticmethod
-    def load_all_assets(db: Session, status: Optional[str] = None) -> pd.DataFrame:
-        """Load all assets into a DataFrame."""
-        from sqlalchemy import select
-        
-        stmt = select(Asset)
-        if status:
-            stmt = stmt.where(Asset.status == status)
-        
-        assets = list(db.execute(stmt).scalars().all())
-        
-        if not assets:
-            logger.warning("No assets found")
-            return pd.DataFrame()
-        
-        data = [
-            {
-                "id": a.id,
-                "name": a.name,
-                "field": a.field,
-                "basin": a.basin,
-                "latitude": a.latitude,
-                "longitude": a.longitude,
-                "onstream_year": a.onstream_year,
-                "status": a.status,
-                "baseline_qi": a.baseline_qi,
-                "baseline_di": a.baseline_di,
-                "baseline_b": a.baseline_b,
-            }
-            for a in assets
-        ]
-        
-        df = pd.DataFrame(data)
-        logger.info(f"Loaded {len(df)} assets")
-        return df
+@dataclass
+class LoadedDataset:
+    """A normalised dataset ready for preprocessing / persistence."""
 
-    @staticmethod
-    def load_recent_production(
-        db: Session,
-        asset_id: str,
-        months: int = 12,
-    ) -> pd.DataFrame:
-        """Load recent production data for an asset."""
-        end_date = datetime.now(timezone.utc).date()
-        start_date = end_date - timedelta(days=months * 30)
-        
-        return DataLoader.load_asset_production(db, asset_id, start_date, end_date)
+    frame: pd.DataFrame
+    source_name: str = "EXTERNAL"
+    dataset_name: str = "unnamed-dataset"
+    source_type: str = ""
+    column_map: dict[str, str] = field(default_factory=dict)
+    unmapped_columns: list[str] = field(default_factory=list)
+
+    @property
+    def row_count(self) -> int:
+        return int(len(self.frame))
+
+
+def _normalise_header(name: Any) -> str:
+    """Lowercase, snake-case and unit-annotate: 'Oil Rate (bbl/d)' -> 'oil_rate_bbl_d'."""
+    import re
+
+    cleaned = str(name).strip().lower()
+    cleaned = cleaned.replace(" ", "_").replace("-", "_")
+    cleaned = re.sub(r"[^a-z0-9_]", "_", cleaned)
+    cleaned = re.sub(r"_+", "_", cleaned)
+    return cleaned.strip("_")
+
+
+def resolve_column_map(
+    columns: Sequence[str],
+    column_map: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    """Build {standard_column -> raw_column} from explicit map + alias table.
+
+    Raises IngestionError when a required standard column cannot be resolved.
+    """
+    normalised = {_normalise_header(c): c for c in columns}
+    resolved: dict[str, str] = {}
+
+    if column_map:
+        for std, raw in column_map.items():
+            key = _normalise_header(std)
+            if key not in STANDARD_COLUMNS:
+                raise IngestionError(f"unknown standard column '{std}' in column_map")
+            if raw not in columns:
+                raise IngestionError(f"column_map target '{raw}' not found in input columns")
+            resolved[key] = raw
+
+    for std in STANDARD_COLUMNS:
+        if std in resolved:
+            continue
+        for alias in COLUMN_ALIASES.get(std, ()):  # alias tables are lowercase
+            if alias in normalised:
+                resolved[std] = normalised[alias]
+                break
+
+    missing = [c for c in ("asset_id", "timestamp", "production") if c not in resolved]
+    if missing:
+        raise IngestionError(
+            f"cannot resolve required column(s) {missing}; "
+            f"provide an explicit column_map. Available: {sorted(map(str, columns))}"
+        )
+    return resolved
+
+
+def _validate_declared_source_type(declared: str | None) -> str | None:
+    """Provenance must be declared explicitly - it is never inferred."""
+    if declared is None:
+        return None
+    st = declared.strip().upper()
+    if st not in SOURCE_TYPES:
+        raise IngestionError(
+            f"default_source_type must be one of {SOURCE_TYPES}, got '{declared}'"
+        )
+    return st
+
+
+def _build_frame(
+    df: pd.DataFrame,
+    *,
+    column_map: Mapping[str, str] | None = None,
+    default_source_type: str | None = None,
+    source_name: str | None = None,
+    dataset_name: str | None = None,
+) -> LoadedDataset:
+    if df.empty:
+        raise IngestionError("input contains no rows")
+
+    resolved = resolve_column_map(df.columns, column_map)
+    out = pd.DataFrame(index=df.index)
+    for std in STANDARD_COLUMNS:
+        raw = resolved.get(std)
+        out[std] = df[raw] if raw is not None else None
+
+    # Required field coercion
+    out["asset_id"] = out["asset_id"].astype(str).str.strip()
+    out["timestamp"] = pd.to_datetime(out["timestamp"], errors="coerce", utc=True)
+    out["production"] = pd.to_numeric(out["production"], errors="coerce")
+
+    # Optional operational fields stay numeric-or-NULL. NEVER fabricated here.
+    for col in ("pressure", "temperature", "flow_rate"):
+        if col in out.columns:
+            out[col] = pd.to_numeric(out[col], errors="coerce")
+    if "valve_status" in resolved:
+        vs = out["valve_status"].astype("object")
+        out["valve_status"] = vs.where(
+            vs.notna() & (vs.astype(str).str.strip() != "") & (vs.astype(str).str.lower() != "nan"),
+            None,
+        )
+
+    # Provenance: explicit column wins over a declared default; ambiguity fails.
+    declared_source_type = _validate_declared_source_type(default_source_type)
+    if "source_type" in resolved:
+        raw_st = out["source_type"].astype("object")
+        raw_st = raw_st.where(raw_st.notna(), None)
+        normalised = raw_st.map(
+            lambda v: v.strip().upper() if isinstance(v, str) and v.strip() else None
+        )
+        present = {v for v in normalised if v is not None}
+        invalid = sorted(present - set(SOURCE_TYPES))
+        if invalid:
+            raise IngestionError(
+                f"invalid source_type value(s) {invalid}; must be one of {SOURCE_TYPES}"
+            )
+        if len(present) > 1:
+            raise IngestionError(
+                f"mixed source_type values {sorted(present)} are ambiguous; "
+                "split the dataset by provenance before ingesting"
+            )
+        if present:
+            out["source_type"] = next(iter(present))
+        elif declared_source_type is None:
+            raise IngestionError(
+                "source_type column present but empty; pass default_source_type"
+            )
+        else:
+            out["source_type"] = declared_source_type
+    else:
+        if declared_source_type is None:
+            raise IngestionError(
+                "no source_type column and no default_source_type given; "
+                "data provenance would be ambiguous"
+            )
+        out["source_type"] = declared_source_type
+
+    if "source" in resolved:
+        src = out["source"].astype("object")
+        out["source"] = src.where(src.notna() & (src.astype(str).str.strip() != ""), None)
+    else:
+        out["source"] = None
+
+    loaded = LoadedDataset(
+        frame=out[list(STANDARD_COLUMNS)],
+        source_name=source_name or "EXTERNAL",
+        dataset_name=dataset_name or "unnamed-dataset",
+        source_type=str(out["source_type"].iloc[0]),
+        column_map={k: v for k, v in resolved.items()},
+        unmapped_columns=[
+            str(c) for c in df.columns if c not in set(resolved.values())
+        ],
+    )
+    logger.info(
+        "loaded %d rows (%s) from '%s'; optional columns present: %s",
+        loaded.row_count,
+        loaded.source_type,
+        loaded.dataset_name,
+        [c for c in OPTIONAL_COLUMNS if resolved.get(c)],
+    )
+    return loaded
+
+
+def _read_csv(source: str | Path, **kwargs: Any) -> pd.DataFrame:
+    return pd.read_csv(source, **kwargs)
+
+
+def load_any(
+    source: "pd.DataFrame | Sequence[dict] | str | Path",
+    *,
+    column_map: Mapping[str, str] | None = None,
+    default_source_type: str | None = None,
+    source_name: str | None = None,
+    dataset_name: str | None = None,
+    csv_kwargs: Mapping[str, Any] | None = None,
+) -> LoadedDataset:
+    """Dispatch on input kind: DataFrame, record list/dict, CSV path or JSON."""
+    if isinstance(source, pd.DataFrame):
+        return _build_frame(
+            source,
+            column_map=column_map,
+            default_source_type=default_source_type,
+            source_name=source_name,
+            dataset_name=dataset_name,
+        )
+
+    if isinstance(source, Mapping):
+        return _build_frame(
+            pd.DataFrame([dict(source)]),
+            column_map=column_map,
+            default_source_type=default_source_type,
+            source_name=source_name,
+            dataset_name=dataset_name,
+        )
+
+    if isinstance(source, Sequence):
+        if all(isinstance(r, Mapping) for r in source):
+            return _build_frame(
+                pd.DataFrame(list(source)),
+                column_map=column_map,
+                default_source_type=default_source_type,
+                source_name=source_name,
+                dataset_name=dataset_name,
+            )
+        raise IngestionError("record sequence items must be mappings (dicts)")
+
+    path = Path(str(source))
+    suffix = path.suffix.lower()
+    if suffix == ".csv":
+        return _build_frame(
+            _read_csv(path, **(csv_kwargs or {})),
+            column_map=column_map,
+            default_source_type=default_source_type,
+            source_name=source_name,
+            dataset_name=dataset_name or path.name,
+        )
+    if suffix == ".json":
+        with open(path, encoding="utf-8") as fh:
+            payload = json.load(fh)
+        return _build_frame(
+            pd.DataFrame(_unwrap_json(payload)),
+            column_map=column_map,
+            default_source_type=default_source_type,
+            source_name=source_name,
+            dataset_name=dataset_name or path.name,
+        )
+    raise IngestionError(f"unsupported file type '{suffix}'; use CSV or JSON")
+
+
+def _unwrap_json(payload: Any) -> list[dict]:
+    """Accept bare lists, {"records": [...]}, {"data": [...]} or NDJSON text."""
+    if isinstance(payload, list):
+        return payload
+    if isinstance(payload, Mapping):
+        for key in ("records", "data", "rows", "items"):
+            if isinstance(payload.get(key), list):
+                return payload[key]
+    raise IngestionError("JSON payload must be a list of objects or contain records/data/rows/items")
+
+
+def from_csv(path: str | Path, **kwargs: Any) -> LoadedDataset:
+    """Load a REAL historical CSV drop (e.g. a published public dataset)."""
+    return load_any(path, **kwargs)
+
+
+def from_records(records: Sequence[dict], **kwargs: Any) -> LoadedDataset:
+    """Load JSON-style records (list of dicts)."""
+    return load_any(records, **kwargs)
+
+
+def now_utc() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+# Backwards-compatible aliases used elsewhere in the codebase.
+UnifiedLoader = load_any

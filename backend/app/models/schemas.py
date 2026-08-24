@@ -1,5 +1,6 @@
 """Pydantic schemas for request/response validation."""
 
+import uuid
 from datetime import date, datetime
 from typing import Any, Literal
 
@@ -18,65 +19,59 @@ class HealthResponse(BaseModel):
 
 class AssetBase(BaseModel):
     """Base asset schema."""
-    name: str = Field(..., max_length=120)
-    field: str = Field(..., max_length=120)
+    asset_id: str = Field(..., max_length=64, description="Human-readable code, e.g. MH-07")
+    field_name: str = Field(..., max_length=120)
     basin: str = Field(..., max_length=120)
+    status: str = "ACTIVE"
     latitude: float
     longitude: float
-    onstream_year: int
-    status: str = "ACTIVE"
-    baseline_qi: float = Field(..., description="Initial rate, bbl/d")
-    baseline_di: float = Field(..., description="Nominal decline /month")
-    baseline_b: float = Field(..., description="Arps exponent")
-    operating_cost_usd_m: float = 1.0
-    intervention_cost_usd_m: float = 1.0
 
 
 class AssetCreate(AssetBase):
-    """Schema for creating an asset."""
-    id: str = Field(..., max_length=32)
+    """Schema for creating an asset (UUID primary key is generated)."""
 
 
 class AssetUpdate(BaseModel):
     """Schema for updating an asset."""
-    name: str | None = None
-    field: str | None = None
+    field_name: str | None = None
     basin: str | None = None
+    status: str | None = None
     latitude: float | None = None
     longitude: float | None = None
-    status: str | None = None
-    operating_cost_usd_m: float | None = None
-    intervention_cost_usd_m: float | None = None
 
 
 class AssetResponse(AssetBase):
     """Schema for asset response."""
-    id: str
+    id: uuid.UUID
+    created_at: datetime
+    updated_at: datetime
 
     class Config:
         from_attributes = True
 
 
 class MonthlyProductionBase(BaseModel):
-    """Base monthly production schema."""
-    period: date
-    oil_bbl_d: float
-    expected_bbl_d: float
-    gas_mmcf_d: float = 0.0
-    water_cut_pct: float = 0.0
-    source: str = "DERIVED"
+    """Base production-history schema (canonical production_history table)."""
+    timestamp: datetime
+    production: float
+    pressure: float | None = None
+    temperature: float | None = None
+    flow_rate: float | None = None
+    valve_status: str | None = None
+    source: str | None = None
+    source_type: str = "SYNTHETIC"
 
 
 class MonthlyProductionCreate(MonthlyProductionBase):
-    """Schema for creating monthly production."""
+    """Schema for creating a production-history row."""
     asset_id: str
 
 
 class MonthlyProductionResponse(MonthlyProductionBase):
-    """Schema for monthly production response."""
-    id: int
+    """Schema for production-history response."""
+    id: uuid.UUID
     asset_id: str
-    provenance_id: int | None = None
+    created_at: datetime
 
     class Config:
         from_attributes = True

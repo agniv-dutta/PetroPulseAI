@@ -1,20 +1,11 @@
 """End-to-end API contract tests (fresh temp DB per session).
 
 Database URL and startup behaviour are configured in conftest.py so the
-environment is fixed before any app module is imported.
+environment is fixed before any app module is imported. The shared
+session-scoped ``client`` fixture lives in conftest.py.
 """
 
 import pytest
-
-from fastapi.testclient import TestClient
-
-from app.main import app
-
-
-@pytest.fixture(scope="session")
-def client():
-    with TestClient(app) as c:
-        yield c
 
 
 def test_health(client):

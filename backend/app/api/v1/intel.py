@@ -1,15 +1,25 @@
 """Anomaly + attribution endpoints."""
 
+import uuid as uuid_lib
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.ingestion.catalog import CANONICAL_ASSETS
 from app.intelligence.pipeline import analyze_asset
-from app.models import AnomalyEvent, Asset
+from app.models import Anomaly, Asset
 
 router = APIRouter(tags=["intelligence"])
+
+_CATALOG_BY_CODE = {a["id"]: a for a in CANONICAL_ASSETS}
+
+ALLOWED_ANOMALY_STATUSES = {
+    "UNACKNOWLEDGED", "ACKNOWLEDGED", "INVESTIGATING", "MONITORING",
+    "RESOLVED", "FALSE_POSITIVE",
+}
 
 
 class AnomalyStatusUpdate(BaseModel):
@@ -19,22 +29,21 @@ class AnomalyStatusUpdate(BaseModel):
 @router.get("/anomalies")
 def list_anomalies(db: Session = Depends(get_db)) -> dict:
     events = db.execute(
-        select(AnomalyEvent).order_by(AnomalyEvent.anomaly_score.desc())
+        select(Anomaly).order_by(Anomaly.anomaly_score.desc())
     ).scalars().all()
     return {
         "rows": [
             {
-                "id": e.id,
+                "id": str(e.id),
                 "assetId": e.asset_id,
                 "severity": e.severity,
                 "anomalyScore": e.anomaly_score,
-                "deviationPct": e.deviation_pct,
-                "expectedBblD": e.expected_bbl_d,
-                "actualBblD": e.actual_bbl_d,
-                "windowStart": e.window_start.isoformat(),
-                "windowEnd": e.window_end.isoformat(),
+                "deviationPct": e.production_deviation,
+                "detectedAt": e.timestamp.isoformat(),
                 "contributingFeatures": e.contributing_features,
                 "status": e.status,
+                "explanation": e.explanation,
+                "modelVersion": e.model_version,
                 "source": "DERIVED",
             }
             for e in events
@@ -47,20 +56,25 @@ def list_anomalies(db: Session = Depends(get_db)) -> dict:
 def update_anomaly_status(
     anomaly_id: str, payload: AnomalyStatusUpdate, db: Session = Depends(get_db)
 ) -> dict:
-    allowed = {"UNACKNOWLEDGED", "INVESTIGATING", "ACKNOWLEDGED", "MONITORING", "RESOLVED"}
-    if payload.status not in allowed:
-        raise HTTPException(422, f"status must be one of {sorted(allowed)}")
-    event = db.get(AnomalyEvent, anomaly_id)
+    if payload.status not in ALLOWED_ANOMALY_STATUSES:
+        raise HTTPException(422, f"status must be one of {sorted(ALLOWED_ANOMALY_STATUSES)}")
+    try:
+        event_id = uuid_lib.UUID(anomaly_id)
+    except ValueError:
+        raise HTTPException(404, f"unknown anomaly {anomaly_id}")
+    event = db.get(Anomaly, event_id)
     if not event:
         raise HTTPException(404, f"unknown anomaly {anomaly_id}")
     event.status = payload.status
     db.commit()
-    return {"id": event.id, "status": event.status}
+    return {"id": str(event.id), "status": event.status}
 
 
 @router.get("/attribution/{asset_id}")
 def attribution(asset_id: str, db: Session = Depends(get_db)) -> dict:
-    asset = db.get(Asset, asset_id)
+    asset = db.execute(
+        select(Asset).where(Asset.asset_id == asset_id)
+    ).scalars().first()
     if not asset:
         raise HTTPException(404, f"unknown asset {asset_id}")
     analysis = analyze_asset(db, asset)
@@ -74,21 +88,23 @@ def attribution(asset_id: str, db: Session = Depends(get_db)) -> dict:
 
 @router.get("/priority/{asset_id}")
 def priority(asset_id: str, db: Session = Depends(get_db)) -> dict:
-    asset = db.get(Asset, asset_id)
+    asset = db.execute(
+        select(Asset).where(Asset.asset_id == asset_id)
+    ).scalars().first()
     if not asset:
         raise HTTPException(404, f"unknown asset {asset_id}")
     analysis = analyze_asset(db, asset)
+    spec = _CATALOG_BY_CODE.get(asset_id, {})
+    intervention_cost_usd_m = spec.get("intervention_cost_usd_m", 1.0)
+    estimated_value = analysis["aips"]["estimated_value_usd_m"]
     return {
         "asset_id": asset_id,
         **analysis["aips"],
         "recovery": analysis["recovery"],
         "financials": {
-            "intervention_cost_usd_m": asset.intervention_cost_usd_m,
-            "estimated_value_usd_m": analysis["aips"]["estimated_value_usd_m"],
-            "roi_multiple": round(
-                analysis["aips"]["estimated_value_usd_m"]
-                / max(asset.intervention_cost_usd_m, 1e-9), 1
-            ),
+            "intervention_cost_usd_m": intervention_cost_usd_m,
+            "estimated_value_usd_m": estimated_value,
+            "roi_multiple": round(estimated_value / max(intervention_cost_usd_m, 1e-9), 1),
         },
     }
 
