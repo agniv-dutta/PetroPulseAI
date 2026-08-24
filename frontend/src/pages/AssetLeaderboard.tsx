@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Search,
@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { calculateAIPS } from '../utils/aipsCalculator';
 import type { AIPSPriority, AssetSeverity } from '../types';
+import { api } from '../api/client';
 
 export interface AssetItem {
   rank: number;
@@ -150,7 +151,33 @@ const generate128Assets = (): AssetItem[] => {
 
 export const AssetLeaderboard: React.FC = () => {
   const navigate = useNavigate();
-  const rawData = useMemo(() => generate128Assets(), []);
+  const fallbackData = useMemo(() => generate128Assets(), []);
+  const [rawData, setRawData] = useState<AssetItem[]>(fallbackData);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const res = await api.leaderboard();
+      if (!res || cancelled) return;
+      setRawData(
+        res.rows.map((r) => ({
+          rank: r.rank,
+          id: r.id,
+          field: r.field,
+          basin: r.basin,
+          currentProd: r.currentProd,
+          expectedProd: r.expectedProd,
+          deviation: Math.round(r.deviation * 10) / 10,
+          declineRate: r.declineRate,
+          severity: (r.severity === 'ALERT' ? 'HIGH' : r.severity === 'WATCH' ? 'WATCH' : r.severity) as AssetSeverity,
+          recoveryPotential: r.recoveryPotential,
+          aipsScore: r.aipsScore,
+          priority: r.priority as AIPSPriority,
+        })),
+      );
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   // Filter States
   const [searchTerm, setSearchTerm] = useState('');

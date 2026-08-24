@@ -29,9 +29,10 @@ import {
 } from 'lucide-react';
 import { AssetMap } from '../components/AssetMap';
 import { DataTransparencyBanner } from '../components/DataTransparencyBanner';
+import { api } from '../api/client';
 
 // Mock Data structure based on specifications
-const mockPortfolio = {
+const fallbackPortfolio = {
   total_assets: 128,
   active_production: 98,
   at_risk: 11,
@@ -64,12 +65,50 @@ const mockPortfolio = {
 export const Dashboard: React.FC = () => {
   const navigate = useNavigate();
   const [hoveredCard, setHoveredCard] = useState<string | null>(null);
-  const [selectedAnomaly, setSelectedAnomaly] = useState<typeof mockPortfolio.anomalies[0] | null>(null);
+  const [selectedAnomaly, setSelectedAnomaly] = useState<typeof fallbackPortfolio.anomalies[0] | null>(null);
   const [lastUpdatedTime, setLastUpdatedTime] = useState<string>('');
+  const [portfolio, setPortfolio] = useState(fallbackPortfolio);
+  const [backendLive, setBackendLive] = useState(false);
 
   useEffect(() => {
     const now = new Date();
     setLastUpdatedTime(now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const summary = await api.portfolioSummary();
+      if (!summary || cancelled) return;
+      setBackendLive(true);
+      setPortfolio({
+        total_assets: summary.totalAssets,
+        active_production: summary.activeAssets,
+        at_risk: summary.atRiskAssets,
+        portfolio_production: summary.currentProductionKbblD,
+        expected_production: summary.expectedProductionKbblD,
+        deviation: summary.portfolioDeviationPct,
+        active_anomalies: summary.topAnomalies.length,
+        recovery_potential:
+          Math.round(summary.topAnomalies.reduce((acc, a) => acc + Math.abs(a.deviationPct), 0) * 10) / 1000,
+        production_trend: summary.productionTrend.map((p) => ({
+          date: p.period.slice(0, 7),
+          actual: p.actual / 10,
+          expected: p.expected / 10,
+          anomaly: p.actual < p.expected * 0.93,
+        })),
+        anomalies: summary.topAnomalies.map((a) => ({
+          id: a.assetId,
+          assetName: a.assetName,
+          severity: a.severity,
+          deviation: a.deviationPct,
+          time: a.period,
+          type: 'Model-flagged underperformance',
+          category: `Anomaly score ${a.anomalyScore.toFixed(2)}`,
+        })),
+      });
+    })();
+    return () => { cancelled = true; };
   }, []);
 
   return (
@@ -111,7 +150,12 @@ export const Dashboard: React.FC = () => {
             <span style={{ color: '#FF9000', fontWeight: 700 }}>OPERATIONAL</span>
           </div>
           <span style={{ color: '#2A2D30' }}>|</span>
-          <span style={{ color: '#B8B3A8' }}>DATA STREAM: <span style={{ color: '#C7F700' }}>SIMULATION ACTIVE</span></span>
+          <span style={{ color: '#B8B3A8' }}>
+            DATA STREAM:{' '}
+            <span style={{ color: backendLive ? '#00D966' : '#C7F700' }}>
+              {backendLive ? 'BACKEND LIVE' : 'SIMULATION ACTIVE'}
+            </span>
+          </span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px', color: '#B8B3A8' }}>
           <span>Last Updated: <strong style={{ color: '#F3EFE4' }}>{lastUpdatedTime || '17:24'}</strong></span>
@@ -262,7 +306,7 @@ export const Dashboard: React.FC = () => {
               <Database size={18} color="#B8B3A8" />
             </div>
             <div style={{ fontSize: '32px', fontWeight: 800, color: '#F3EFE4', marginTop: '8px' }}>
-              {mockPortfolio.total_assets}
+              {portfolio.total_assets}
             </div>
             <div style={{ fontSize: '11px', color: '#00D966', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '4px' }}>
               <TrendingUp size={12} />
@@ -290,7 +334,7 @@ export const Dashboard: React.FC = () => {
               <CheckCircle2 size={18} color="#00D966" />
             </div>
             <div style={{ fontSize: '32px', fontWeight: 800, color: '#00D966', marginTop: '8px' }}>
-              {mockPortfolio.active_production}
+              {portfolio.active_production}
             </div>
             <div style={{ fontSize: '11px', color: '#B8B3A8', marginTop: '4px' }}>
               76.5% Operational Rate
@@ -317,7 +361,7 @@ export const Dashboard: React.FC = () => {
               <AlertOctagon size={18} color="#FF3B3B" />
             </div>
             <div style={{ fontSize: '32px', fontWeight: 800, color: '#FF3B3B', marginTop: '8px' }}>
-              {mockPortfolio.at_risk}
+              {portfolio.at_risk}
             </div>
             <div style={{ fontSize: '11px', color: '#FF3B3B', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '4px' }}>
               <TrendingDown size={12} />
@@ -345,7 +389,7 @@ export const Dashboard: React.FC = () => {
               <Zap size={18} color="#FF9000" />
             </div>
             <div style={{ fontSize: '32px', fontWeight: 800, color: '#FF9000', marginTop: '8px' }}>
-              {mockPortfolio.portfolio_production} <span style={{ fontSize: '14px', fontWeight: 500, color: '#B8B3A8' }}>MMT</span>
+              {portfolio.portfolio_production} <span style={{ fontSize: '14px', fontWeight: 500, color: '#B8B3A8' }}>MMBL/mo</span>
             </div>
             <div style={{ fontSize: '11px', color: '#B8B3A8', marginTop: '4px' }}>
               Current Annual Rate
@@ -372,7 +416,7 @@ export const Dashboard: React.FC = () => {
               <TrendingUp size={18} color="#B8B3A8" />
             </div>
             <div style={{ fontSize: '32px', fontWeight: 800, color: '#F3EFE4', marginTop: '8px' }}>
-              {mockPortfolio.expected_production} <span style={{ fontSize: '14px', fontWeight: 500, color: '#B8B3A8' }}>MMT</span>
+              {portfolio.expected_production} <span style={{ fontSize: '14px', fontWeight: 500, color: '#B8B3A8' }}>MMBL/mo</span>
             </div>
             <div style={{ fontSize: '11px', color: '#B8B3A8', marginTop: '4px' }}>
               Baseline Target
@@ -399,7 +443,7 @@ export const Dashboard: React.FC = () => {
               <TrendingDown size={18} color="#FF3B3B" />
             </div>
             <div style={{ fontSize: '32px', fontWeight: 800, color: '#FF3B3B', marginTop: '8px' }}>
-              {mockPortfolio.deviation}%
+              {portfolio.deviation}%
             </div>
             <div style={{ fontSize: '11px', color: '#FF3B3B', marginTop: '4px' }}>
               Below Target Baseline
@@ -427,7 +471,7 @@ export const Dashboard: React.FC = () => {
               <AlertTriangle size={18} color="#FF9000" />
             </div>
             <div style={{ fontSize: '32px', fontWeight: 800, color: '#F3EFE4', marginTop: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              0{mockPortfolio.active_anomalies}
+              0{portfolio.active_anomalies}
               <span style={{
                 backgroundColor: '#FF900022',
                 color: '#FF9000',
@@ -466,7 +510,7 @@ export const Dashboard: React.FC = () => {
               <Zap size={18} color="#00D966" />
             </div>
             <div style={{ fontSize: '32px', fontWeight: 800, color: '#00D966', marginTop: '8px' }}>
-              {mockPortfolio.recovery_potential} <span style={{ fontSize: '14px', fontWeight: 500, color: '#B8B3A8' }}>MMBL</span>
+              {portfolio.recovery_potential} <span style={{ fontSize: '14px', fontWeight: 500, color: '#B8B3A8' }}>MMBL</span>
             </div>
             <div style={{ fontSize: '11px', color: '#00D966', marginTop: '4px' }}>
               Identified AI Uplift
@@ -517,7 +561,7 @@ export const Dashboard: React.FC = () => {
 
             <div style={{ width: '100%', height: '320px' }}>
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={mockPortfolio.production_trend} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                <AreaChart data={portfolio.production_trend} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                   <defs>
                     <linearGradient id="colorActual" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor="#FF9000" stopOpacity={0.4} />
@@ -631,7 +675,7 @@ export const Dashboard: React.FC = () => {
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              {mockPortfolio.anomalies.map((item) => (
+              {portfolio.anomalies.map((item) => (
                 <div
                   key={item.id}
                   onClick={() => setSelectedAnomaly(item)}

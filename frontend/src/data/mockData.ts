@@ -44,7 +44,7 @@ export interface TelemetryRow {
   production: number;
   forecast: number;
   anomalyScore: number;
-  status: 'NORMAL' | 'CRITICAL';
+  status: 'NORMAL' | 'CRITICAL' | 'ALERT' | 'WATCH';
 }
 
 // 1. Core Asset Inventory

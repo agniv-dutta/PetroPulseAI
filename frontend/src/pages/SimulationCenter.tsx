@@ -1,26 +1,65 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { generateTelemetryBase, mockAssets } from '../data/mockData';
-import { 
-  Play, 
-  Pause, 
-  RotateCcw, 
-  Activity, 
+import {
+  Play,
+  Pause,
+  RotateCcw,
+  Activity,
 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip } from 'recharts';
 import { DataTransparencyBanner } from '../components/DataTransparencyBanner';
+import { useSimulationSocket } from '../api/hooks';
+import { api } from '../api/client';
 
 export const SimulationCenter: React.FC = () => {
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [speed, setSpeed] = useState<number>(1); // 1x, 5x, 10x
   const [selectedAsset, setSelectedAsset] = useState<string>('MH-07');
-  
+
   // We populate initial data (e.g. 15 points) to start with
   const [stream, setStream] = useState(() => generateTelemetryBase(15));
   const [flashAlert, setFlashAlert] = useState<boolean>(false);
   const streamTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  
+
+  // Backend-backed simulation (falls back to local generator if unreachable)
+  const sim = useSimulationSocket(selectedAsset);
+  const [backendStreaming, setBackendStreaming] = useState<boolean>(false);
+  const lastTickCountRef = useRef(0);
+
   // Audio or visual flash handler for critical states
   const latestDataPoint = stream[stream.length - 1];
+
+  const appendTick = (t: typeof sim.ticks[number]) => {
+    if (t.severity === 'CRITICAL' || t.anomaly_score > 0.85) {
+      setFlashAlert(true);
+      setTimeout(() => setFlashAlert(false), 500);
+    }
+    setStream((prevStream) => {
+      const updated = [
+        ...prevStream,
+        {
+          timestamp: new Date(t.timestamp).toLocaleTimeString([], {
+            hour: '2-digit', minute: '2-digit', second: '2-digit',
+          }),
+          assetId: t.asset_id,
+          production: Math.round(t.production_bbl_d),
+          forecast: Math.round(t.expected_bbl_d),
+          anomalyScore: parseFloat(t.anomaly_score.toFixed(2)),
+          status: t.severity as 'NORMAL' | 'CRITICAL' | 'ALERT' | 'WATCH',
+        },
+      ];
+      if (updated.length > 25) updated.shift();
+      return updated;
+    });
+  };
+
+  useEffect(() => {
+    if (!backendStreaming || !sim.ticks.length) return;
+    if (sim.ticks.length === lastTickCountRef.current) return;
+    lastTickCountRef.current = sim.ticks.length;
+    appendTick(sim.ticks[sim.ticks.length - 1]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sim.ticks.length, backendStreaming]);
 
   useEffect(() => {
     if (isPlaying) {
@@ -87,8 +126,26 @@ export const SimulationCenter: React.FC = () => {
     };
   }, [isPlaying, speed, selectedAsset]);
 
+  const handlePlay = async () => {
+    setIsPlaying(true);
+    const started = await sim.start('VALVE_FAILURE');
+    if (started) {
+      lastTickCountRef.current = 0;
+      setStream(generateTelemetryBase(5));
+      setBackendStreaming(true);
+    } else {
+      setBackendStreaming(false);
+    }
+  };
+
+  const handlePause = () => {
+    setIsPlaying(false);
+  };
+
   const handleReset = () => {
     setIsPlaying(false);
+    setBackendStreaming(false);
+    if (sim.sessionId) void api.stopSimulation(sim.sessionId);
     setStream(generateTelemetryBase(15));
     setFlashAlert(false);
   };
@@ -131,8 +188,8 @@ export const SimulationCenter: React.FC = () => {
         {/* Play / Pause / Reset */}
         <div className="flex items-center gap-2">
           {isPlaying ? (
-            <button 
-              onClick={() => setIsPlaying(false)}
+            <button
+              onClick={handlePause}
               className="p-3 bg-dark-bg hover:bg-dark-elevated border border-dark-border text-accent-amber rounded transition"
               title="Pause Simulation"
               aria-label="Pause simulation"
@@ -140,8 +197,8 @@ export const SimulationCenter: React.FC = () => {
               <Pause size={16} fill="currentColor" />
             </button>
           ) : (
-            <button 
-              onClick={() => setIsPlaying(true)}
+            <button
+              onClick={handlePlay}
               className="p-3 bg-accent-amber text-dark-bg rounded transition hover:bg-opacity-95 shadow-md shadow-accent-amber shadow-opacity-10"
               title="Play Simulation"
               aria-label="Play simulation"
@@ -161,6 +218,7 @@ export const SimulationCenter: React.FC = () => {
 
           <span className="text-xs font-mono text-text-secondary uppercase ml-2">
             Status: {isPlaying ? <span className="text-accent-green font-bold">STREAMING</span> : 'PAUSED'}
+            {backendStreaming && <span className="ml-2 text-[10px] text-accent-lime">[BACKEND WS]</span>}
           </span>
         </div>
 
