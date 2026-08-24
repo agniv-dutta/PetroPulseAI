@@ -5,31 +5,127 @@ import {
   Pause,
   RotateCcw,
   Activity,
+  Loader2,
+  AlertTriangle,
+  RefreshCw
 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip } from 'recharts';
 import { DataTransparencyBanner } from '../components/DataTransparencyBanner';
-import { useSimulationSocket } from '../api/hooks';
-import { api } from '../api/client';
+import { simulationApi, SimulationWebSocket } from '../api/simulation';
+import { assetsApi } from '../api/assets';
+import type { SimulationTelemetry, SimulationEvent, SimulationResponse } from '../api/types';
 
 export const SimulationCenter: React.FC = () => {
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [speed, setSpeed] = useState<number>(1); // 1x, 5x, 10x
   const [selectedAsset, setSelectedAsset] = useState<string>('MH-07');
+  const [simulationId, setSimulationId] = useState<string | null>(null);
+  const [simulation, setSimulation] = useState<SimulationResponse | null>(null);
+  const [loading, setLoading] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
+  const [assets, setAssets] = useState<Array<{ id: string; name: string }>>(mockAssets);
 
   // We populate initial data (e.g. 15 points) to start with
   const [stream, setStream] = useState(() => generateTelemetryBase(15));
   const [flashAlert, setFlashAlert] = useState<boolean>(false);
   const streamTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const wsRef = useRef<SimulationWebSocket | null>(null);
 
-  // Backend-backed simulation (falls back to local generator if unreachable)
-  const sim = useSimulationSocket(selectedAsset);
-  const [backendStreaming, setBackendStreaming] = useState<boolean>(false);
-  const lastTickCountRef = useRef(0);
+  // Load assets on mount
+  useEffect(() => {
+    const loadAssets = async () => {
+      try {
+        const assetData = await assetsApi.list({ limit: 100 });
+        setAssets(assetData.map(a => ({ id: a.id, name: a.name })));
+      } catch (err) {
+        console.error('Failed to load assets:', err);
+      }
+    };
+    loadAssets();
+  }, []);
+
+  // Start simulation
+  const startSimulation = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const simResponse = await simulationApi.start({ asset_id: selectedAsset, scenario: 'baseline' });
+      setSimulationId(simResponse.simulation_id);
+      setSimulation(simResponse);
+
+      // Connect WebSocket
+      const ws = new SimulationWebSocket(simResponse.simulation_id);
+      wsRef.current = ws;
+
+      await ws.connect();
+
+      // Subscribe to telemetry
+      ws.on('telemetry', (data: SimulationTelemetry) => {
+        appendTick({
+          timestamp: data.timestamp,
+          asset_id: data.asset_id,
+          production_bbl_d: data.production,
+          expected_bbl_d: data.forecast,
+          anomaly_score: data.anomaly_score,
+          severity: data.severity,
+        });
+      });
+
+      // Subscribe to events
+      ws.on('anomaly_injected', (data: SimulationEvent) => {
+        setFlashAlert(true);
+        setTimeout(() => setFlashAlert(false), 500);
+      });
+
+      setIsPlaying(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to start simulation');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Stop simulation
+  const stopSimulation = async () => {
+    if (simulationId) {
+      try {
+        await simulationApi.stop(simulationId);
+      } catch (err) {
+        console.error('Failed to stop simulation:', err);
+      }
+    }
+
+    // Disconnect WebSocket
+    if (wsRef.current) {
+      wsRef.current.disconnect();
+      wsRef.current = null;
+    }
+
+    setSimulationId(null);
+    setSimulation(null);
+    setIsPlaying(false);
+  };
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (wsRef.current) {
+        wsRef.current.disconnect();
+      }
+    };
+  }, []);
 
   // Audio or visual flash handler for critical states
   const latestDataPoint = stream[stream.length - 1];
 
-  const appendTick = (t: typeof sim.ticks[number]) => {
+  const appendTick = (t: {
+    timestamp: string;
+    asset_id: string;
+    production_bbl_d: number;
+    expected_bbl_d: number;
+    anomaly_score: number;
+    severity: string;
+  }) => {
     if (t.severity === 'CRITICAL' || t.anomaly_score > 0.85) {
       setFlashAlert(true);
       setTimeout(() => setFlashAlert(false), 500);
@@ -52,14 +148,6 @@ export const SimulationCenter: React.FC = () => {
       return updated;
     });
   };
-
-  useEffect(() => {
-    if (!backendStreaming || !sim.ticks.length) return;
-    if (sim.ticks.length === lastTickCountRef.current) return;
-    lastTickCountRef.current = sim.ticks.length;
-    appendTick(sim.ticks[sim.ticks.length - 1]);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sim.ticks.length, backendStreaming]);
 
   useEffect(() => {
     if (isPlaying) {
@@ -127,25 +215,23 @@ export const SimulationCenter: React.FC = () => {
   }, [isPlaying, speed, selectedAsset]);
 
   const handlePlay = async () => {
-    setIsPlaying(true);
-    const started = await sim.start('VALVE_FAILURE');
-    if (started) {
-      lastTickCountRef.current = 0;
-      setStream(generateTelemetryBase(5));
-      setBackendStreaming(true);
-    } else {
-      setBackendStreaming(false);
+    if (isPlaying) return;
+    await startSimulation();
+  };
+
+  const handlePause = async () => {
+    if (simulationId) {
+      try {
+        await simulationApi.pause(simulationId);
+      } catch (err) {
+        console.error('Failed to pause simulation:', err);
+      }
     }
-  };
-
-  const handlePause = () => {
     setIsPlaying(false);
   };
 
-  const handleReset = () => {
-    setIsPlaying(false);
-    setBackendStreaming(false);
-    if (sim.sessionId) void api.stopSimulation(sim.sessionId);
+  const handleReset = async () => {
+    await stopSimulation();
     setStream(generateTelemetryBase(15));
     setFlashAlert(false);
   };
@@ -160,6 +246,55 @@ export const SimulationCenter: React.FC = () => {
     <div className="space-y-6 relative">
       {/* Data Transparency Banner */}
       <DataTransparencyBanner context="simulation" isDismissible />
+
+      {/* ERROR STATE */}
+      {error && (
+        <div style={{
+          backgroundColor: '#2D1A1A',
+          border: '1px solid #FF4444',
+          borderRadius: '8px',
+          padding: '16px 24px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '12px'
+        }}>
+          <AlertTriangle size={20} style={{ color: '#FF4444' }} />
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 600, color: '#FF4444', marginBottom: '4px' }}>Simulation Error</div>
+            <div style={{ fontSize: '13px', color: '#B8B3A8' }}>{error}</div>
+          </div>
+          <button
+            onClick={() => setError(null)}
+            style={{
+              backgroundColor: '#FF4444',
+              color: '#F3EFE4',
+              border: 'none',
+              padding: '8px 16px',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              fontWeight: 600,
+              fontSize: '13px'
+            }}
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
+      {/* LOADING STATE */}
+      {loading && (
+        <div style={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '100px 32px',
+          gap: '16px'
+        }}>
+          <Loader2 size={48} style={{ color: '#FF9000' }} className="animate-spin" />
+          <div style={{ color: '#B8B3A8', fontSize: '14px' }}>Starting simulation...</div>
+        </div>
+      )}
 
       {/* Visual Flash Alert overlay when threshold is breached */}
       {flashAlert && (

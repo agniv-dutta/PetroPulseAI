@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ResponsiveContainer,
@@ -18,9 +18,13 @@ import {
   Download,
   AlertTriangle,
   ChevronRight,
-  X
+  X,
+  Loader2
 } from 'lucide-react';
 import { DataTransparencyBanner } from '../components/DataTransparencyBanner';
+import { anomalyApi } from '../api/anomaly';
+import { assetsApi } from '../api/assets';
+import type { AnomalyResponse, AssetResponse } from '../api/types';
 
 export interface AnomalyItem {
   id: string;
@@ -223,6 +227,73 @@ export const AnomalyDetectionCenter: React.FC = () => {
   const navigate = useNavigate();
   const [anomaliesList, setAnomaliesList] = useState<AnomalyItem[]>(mockAnomaliesList);
   const [selectedAssetId, setSelectedAssetId] = useState<string>('AD-8842');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [assets, setAssets] = useState<AssetResponse[]>([]);
+
+  // Load anomalies and assets on mount
+  const loadAnomalies = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const [anomalies, assetData] = await Promise.all([
+        anomalyApi.getActive(100),
+        assetsApi.list({ limit: 1000 }),
+      ]);
+      setAssets(assetData);
+
+      // Convert API anomalies to AnomalyItem format
+      const convertedAnomalies: AnomalyItem[] = anomalies.map((a) => {
+        const asset = assetData.find(asset => asset.id === a.asset_id);
+        return {
+          id: a.id,
+          assetId: a.asset_id,
+          field: asset?.field || 'Unknown',
+          basin: asset?.basin || 'Unknown',
+          severity: a.severity as 'CRITICAL' | 'HIGH' | 'WATCH' | 'NORMAL',
+          status: a.status === 'ACTIVE' ? 'UNACKNOWLEDGED' : a.status as 'UNACKNOWLEDGED' | 'INVESTIGATING' | 'ACKNOWLEDGED' | 'MONITORING' | 'RESOLVED',
+          deviation: a.deviation_pct,
+          absDeviation: `${a.deviation_pct > 0 ? '+' : ''}${Math.round(a.deviation_pct)}%`,
+          expected: a.expected_bbl_d,
+          actual: a.actual_bbl_d,
+          aiScore: Math.round(a.anomaly_score * 100),
+          detectionMethod: 'AI Model',
+          detectedAt: a.detected_at,
+          detectedRelative: 'T-00:00:00',
+          duration: 'Active',
+          description: `Anomaly detected with ${a.contributing_features.length} contributing features`,
+          rootCauses: a.contributing_features.slice(0, 2).map(f => ({
+            title: f.feature,
+            desc: `Feature importance: ${f.importance.toFixed(2)}`,
+            impact: `${Math.round(f.importance * 100)}%`
+          })),
+          recoveryPotential: 'TBD',
+          recommendedAction: 'Investigate contributing features',
+          historyChart: [
+            { time: 'T-30', actual: a.expected_bbl_d, expected: a.expected_bbl_d },
+            { time: 'NOW', actual: a.actual_bbl_d, expected: a.expected_bbl_d },
+          ],
+          timeline: [
+            { time: 'NOW', text: a.status === 'ACTIVE' ? 'Awaiting acknowledgment' : a.status, active: true },
+          ],
+          correlatedAssets: [
+            { id: a.asset_id, x: 50, y: 50, active: true }
+          ]
+        };
+      });
+
+      setAnomaliesList(convertedAnomalies.length > 0 ? convertedAnomalies : mockAnomaliesList);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load anomalies');
+      // Keep mock data on error
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadAnomalies();
+  }, []);
 
   // Filter & Search states
   const [searchTerm, setSearchTerm] = useState('');
@@ -290,6 +361,59 @@ export const AnomalyDetectionCenter: React.FC = () => {
   return (
     <div style={{ backgroundColor: '#080909', minHeight: '100vh', color: '#F3EFE4', padding: '24px 32px', fontFamily: "'Plus Jakarta Sans', sans-serif" }}>
       
+      {/* ERROR STATE */}
+      {error && (
+        <div style={{
+          backgroundColor: '#2D1A1A',
+          border: '1px solid #FF4444',
+          borderRadius: '8px',
+          padding: '16px 24px',
+          marginBottom: '24px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '12px'
+        }}>
+          <AlertTriangle size={20} style={{ color: '#FF4444' }} />
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 600, color: '#FF4444', marginBottom: '4px' }}>API Connection Error</div>
+            <div style={{ fontSize: '13px', color: '#B8B3A8' }}>{error}</div>
+          </div>
+          <button
+            onClick={loadAnomalies}
+            style={{
+              backgroundColor: '#FF4444',
+              color: '#F3EFE4',
+              border: 'none',
+              padding: '8px 16px',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              fontWeight: 600,
+              fontSize: '13px'
+            }}
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
+      {/* LOADING STATE */}
+      {loading && !error && (
+        <div style={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '100px 32px',
+          gap: '16px'
+        }}>
+          <Loader2 size={48} style={{ color: '#FF9000' }} className="animate-spin" />
+          <div style={{ color: '#B8B3A8', fontSize: '14px' }}>Loading anomaly data...</div>
+        </div>
+      )}
+
+      {/* MAIN CONTENT */}
+      {!loading && !error && (
+      <>
       {/* DATA TRANSPARENCY BANNER */}
       <div style={{ marginBottom: '24px' }}>
         <DataTransparencyBanner context="anomaly" isDismissible />
@@ -792,6 +916,8 @@ export const AnomalyDetectionCenter: React.FC = () => {
 
         </div>
       </div>
+      </>
+      )}
 
     </div>
   );

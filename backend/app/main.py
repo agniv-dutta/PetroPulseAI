@@ -2,15 +2,22 @@
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.v1 import assets, forecast, intel, system
+from app.api.v1 import anomaly
+from app.api.v1 import aips
+from app.api.v1 import assets
+from app.api.v1 import forecast
+from app.api.v1 import health
+from app.api.v1 import metrics
+from app.api.v1 import shap
+from app.api.v1 import simulation
+from app.api.v1 import websocket
 from app.core.config import settings
 from app.core.database import SessionLocal, init_db
-from app.ingestion.seed import seed_database
-from app.intelligence.pipeline import warm_cache
-from app.simulation.ws import hub
+from app.data.sample_assets import SampleAssetGenerator
+from app.utils.cache import init_redis
 from app.utils.logger import setup_logger
 
 logger = setup_logger("petropulse")
@@ -18,20 +25,31 @@ logger = setup_logger("petropulse")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    hub.bind_loop()
+    """Application lifespan manager."""
+    # Initialize database
     init_db()
-    db = SessionLocal()
-    try:
-        result = seed_database(db)
-        logger.info("seed: %s", result)
-        if settings.warm_cache_on_startup:
-            warmed = warm_cache(db)
-            logger.info("portfolio cache warmed for %d assets", warmed)
-    finally:
-        db.close()
+    logger.info("Database authenticated")
+    
+    # Initialize Redis if configured
+    redis_client = init_redis()
+    if redis_client:
+        logger.info("Redis connection established")
+    else:
+        logger.info("Redis not configured or unavailable")
+    
+    # Seed database with sample data if enabled
+    if settings.seed_on_startup:
+        db = SessionLocal()
+        try:
+            result = SampleAssetGenerator.seed_database(db)
+            logger.info(f"Database seeding: {result}")
+        finally:
+            db.close()
+    
     yield
-    for session_id in list(hub.sessions.keys()):
-        await hub.remove_session(session_id)
+    
+    # Cleanup
+    logger.info("Application shutdown")
 
 
 app = FastAPI(
@@ -50,47 +68,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Include API v1 routers
+app.include_router(health.router, prefix=settings.api_v1_prefix)
 app.include_router(assets.router, prefix=settings.api_v1_prefix)
 app.include_router(forecast.router, prefix=settings.api_v1_prefix)
-app.include_router(intel.router, prefix=settings.api_v1_prefix)
-app.include_router(system.router, prefix=settings.api_v1_prefix)
-
-
-@app.get("/health", tags=["system"])
-def health() -> dict:
-    return {
-        "status": "ok",
-        "service": settings.app_name,
-        "version": settings.version,
-        "active_simulations": len(hub.sessions),
-    }
-
-
-@app.websocket("/ws/simulation/{session_id}")
-async def simulation_ws(websocket: WebSocket, session_id: str) -> None:
-    await websocket.accept()
-    session = hub.get(session_id)
-    if not session:
-        await websocket.send_json({"type": "error", "message": f"unknown session {session_id}"})
-        await websocket.close(code=4404)
-        return
-
-    session.clients.add(websocket)
-    try:
-        while True:
-            message = await websocket.receive_text()
-            if message.startswith("SET_SCENARIO:"):
-                scenario = message.split(":", 1)[1]
-                hub.set_scenario(session_id, scenario)
-                await websocket.send_json({
-                    "type": "scenario_changed", "data": {"scenario": scenario},
-                })
-            elif message == "PING":
-                await websocket.send_json({"type": "pong"})
-    except WebSocketDisconnect:
-        pass
-    finally:
-        session.clients.discard(websocket)
+app.include_router(anomaly.router, prefix=settings.api_v1_prefix)
+app.include_router(aips.router, prefix=settings.api_v1_prefix)
+app.include_router(shap.router, prefix=settings.api_v1_prefix)
+app.include_router(metrics.router, prefix=settings.api_v1_prefix)
+app.include_router(simulation.router, prefix=settings.api_v1_prefix)
+app.include_router(websocket.router)
 
 
 if __name__ == "__main__":

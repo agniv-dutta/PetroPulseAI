@@ -1,14 +1,14 @@
 """Pydantic schemas for request/response validation."""
 
 from datetime import date, datetime
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class HealthResponse(BaseModel):
     """Health check response."""
-    status: str
+    status: Literal["healthy", "unhealthy"]
     service: str
     version: str
     database_connected: bool
@@ -89,16 +89,32 @@ class ForecastRequest(BaseModel):
     model_name: str = "arps"
 
 
+class ForecastPoint(BaseModel):
+    """Single forecast point."""
+    step: int
+    forecast: float
+    lower: float
+    upper: float
+
+
+class ForecastMetrics(BaseModel):
+    """Forecast performance metrics."""
+    mae: float
+    rmse: float
+    r2: float
+    mape: float
+
+
 class ForecastResponse(BaseModel):
     """Schema for forecast response."""
     asset_id: str
-    model_name: str
-    horizon_days: int
-    created_at: datetime
-    metrics: dict[str, float]
-    params: dict[str, Any]
-    series: list[dict[str, Any]]
-    feature_importance: list[dict[str, Any]]
+    horizon: int
+    forecast: list[ForecastPoint]
+    model: str
+    confidence: float
+    metrics: ForecastMetrics
+    historical_points: list[dict[str, Any]]
+    forecast_points: list[ForecastPoint]
 
 
 class AnomalyRequest(BaseModel):
@@ -115,7 +131,7 @@ class AnomalyResponse(BaseModel):
     detected_at: datetime
     window_start: date
     window_end: date
-    severity: str
+    severity: Literal["CRITICAL", "ALERT", "WATCH", "NORMAL"]
     anomaly_score: float
     deviation_pct: float
     expected_bbl_d: float
@@ -133,7 +149,7 @@ class AIPSScoreResponse(BaseModel):
     """Schema for AIPS scoring response."""
     asset_id: str
     aips_score: float
-    priority: str
+    priority: Literal["CRITICAL", "HIGH", "MEDIUM", "LOW"]
     breakdown: dict[str, Any]
     created_at: datetime
 
@@ -177,12 +193,81 @@ class SimulationStartRequest(BaseModel):
 
 class SimulationResponse(BaseModel):
     """Schema for simulation response."""
-    session_id: str
+    simulation_id: str
     asset_id: str
     scenario: str
     created_at: datetime
+    status: Literal["RUNNING", "PAUSED", "STOPPED"]
     ticks_sent: int
-    status: str
+
+
+class SimulationTelemetry(BaseModel):
+    """Simulation telemetry data."""
+    type: Literal["telemetry"]
+    timestamp: datetime
+    asset_id: str
+    source_type: Literal["SYNTHETIC", "REAL"]
+    production: float
+    pressure: float
+    temperature: float
+    flow_rate: float
+    forecast: float
+    anomaly_score: float
+    severity: Literal["CRITICAL", "ALERT", "WATCH", "NORMAL"]
+    aips_score: float
+    priority: Literal["CRITICAL", "HIGH", "MEDIUM", "LOW"]
+    recovery_opportunity: float
+    confidence: float
+
+
+class SimulationEvent(BaseModel):
+    """Simulation event message."""
+    type: Literal["simulation_started", "anomaly_injected", "priority_changed", "simulation_stopped", "error"]
+    timestamp: datetime
+    simulation_id: str
+    message: str
+    data: dict[str, Any] = {}
+
+
+class ErrorResponse(BaseModel):
+    """Error response schema."""
+    error: str
+    message: str
+    status_code: int
+    details: dict[str, Any] = {}
+
+
+class ForecastMetricsResponse(BaseModel):
+    """Forecast metrics response."""
+    horizon: str
+    mae: float
+    rmse: float
+    r2: float
+    mape: float
+
+
+class AnomalyMetricsResponse(BaseModel):
+    """Anomaly metrics response."""
+    precision: float
+    recall: float
+    f1: float
+    accuracy: float
+    roc_auc: float
+    true_positives: int
+    false_positives: int
+    false_negatives: int
+    true_negatives: int
+
+
+class AssetRankingResponse(BaseModel):
+    """Asset ranking response."""
+    rank: int
+    asset_id: str
+    asset_name: str
+    aips_score: float
+    priority: Literal["CRITICAL", "HIGH", "MEDIUM", "LOW"]
+    field: str
+    basin: str
 
 
 class SimulationUpdateRequest(BaseModel):

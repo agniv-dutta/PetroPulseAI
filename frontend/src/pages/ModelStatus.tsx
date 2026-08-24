@@ -1,27 +1,54 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { mockModels, mockDataIngestionLog } from '../data/mockData';
 import { 
   ShieldCheck, 
   Settings, 
   Terminal,
   RefreshCw,
-  Info
+  Info,
+  Loader2,
+  AlertTriangle
 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
+import { metricsApi } from '../api/metrics';
+import type { ForecastMetricsResponse } from '../api/types';
 
 export const ModelStatus: React.FC = () => {
   const [retrainingModule, setRetrainingModule] = useState<string | null>(null);
   const [retrainSuccess, setRetrainSuccess] = useState<string | null>(null);
+  const [forecastMetrics, setForecastMetrics] = useState<ForecastMetricsResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadMetrics = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const [forecast] = await Promise.all([
+        metricsApi.getForecastMetrics('90d'),
+        metricsApi.getAnomalyMetrics(),
+      ]);
+      setForecastMetrics(forecast);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load metrics');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadMetrics();
+  }, []);
 
   // Performance history mock data
   const performanceHistory = [
-    { time: '-24h', accuracy: 93.8 },
+    { time: '-24h', accuracy: forecastMetrics?.r2 ? forecastMetrics.r2 * 100 : 93.8 },
     { time: '-20h', accuracy: 94.2 },
     { time: '-16h', accuracy: 93.1 },
     { time: '-12h', accuracy: 94.5 },
     { time: '-8h', accuracy: 92.4 },
     { time: '-4h', accuracy: 95.8 },
-    { time: 'Now', accuracy: 94.8 },
+    { time: 'Now', accuracy: forecastMetrics?.r2 ? forecastMetrics.r2 * 100 : 94.8 },
   ];
 
   const handleForceRetrain = (name: string) => {
@@ -36,6 +63,58 @@ export const ModelStatus: React.FC = () => {
 
   return (
     <div className="space-y-6">
+      {/* ERROR STATE */}
+      {error && (
+        <div style={{
+          backgroundColor: '#2D1A1A',
+          border: '1px solid #FF4444',
+          borderRadius: '8px',
+          padding: '16px 24px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '12px'
+        }}>
+          <AlertTriangle size={20} style={{ color: '#FF4444' }} />
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 600, color: '#FF4444', marginBottom: '4px' }}>API Connection Error</div>
+            <div style={{ fontSize: '13px', color: '#B8B3A8' }}>{error}</div>
+          </div>
+          <button
+            onClick={loadMetrics}
+            style={{
+              backgroundColor: '#FF4444',
+              color: '#F3EFE4',
+              border: 'none',
+              padding: '8px 16px',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              fontWeight: 600,
+              fontSize: '13px'
+            }}
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
+      {/* LOADING STATE */}
+      {loading && !error && (
+        <div style={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '100px 32px',
+          gap: '16px'
+        }}>
+          <Loader2 size={48} style={{ color: '#FF9000' }} className="animate-spin" />
+          <div style={{ color: '#B8B3A8', fontSize: '14px' }}>Loading model metrics...</div>
+        </div>
+      )}
+
+      {/* MAIN CONTENT */}
+      {!loading && !error && (
+      <>
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-dark-border pb-4 gap-4">
         <div>
@@ -229,6 +308,8 @@ export const ModelStatus: React.FC = () => {
           <span className="font-bold text-text-primary uppercase">Pipeline Retraining Triggers:</span> Retraining pipelines execute automatically when Mean Absolute Percentage Error (MAPE) drifts above 5%, or when new sensor node layouts are added to SCADA. Manual retraining override triggers can be initiated by administrative engineers using 'Force Retrain'.
         </div>
       </div>
+      </>
+      )}
     </div>
   );
 };

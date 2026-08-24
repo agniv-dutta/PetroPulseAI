@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import {
   ResponsiveContainer,
@@ -22,26 +22,119 @@ import {
   Play,
   Flame,
   Brain,
-  X
+  X,
+  Loader2
 } from 'lucide-react';
 import { RecoveryOpportunityCard } from '../components/RecoveryOpportunityCard';
 import { AIPSBreakdown } from '../components/AIPSBreakdown';
 import { SHAPExplanationCard } from '../components/SHAPExplanationCard';
 import { calculateAIPS } from '../utils/aipsCalculator';
-import { useAssetData } from '../hooks/useAssetData';
+import { assetsApi } from '../api/assets';
+import { forecastApi } from '../api/forecast';
+import { aipsApi } from '../api/aips';
+import { shapApi } from '../api/shap';
+import type { AssetResponse, ForecastResponse, AIPSScoreResponse, SHAPExplanationResponse } from '../api/types';
+
+// Mock asset data for fallback
+const mockAssetData = {
+  id: 'MH-07',
+  name: 'Mumbai High North-7',
+  field: 'Mumbai High',
+  basin: 'Mumbai Offshore',
+  currentProd: 1.17,
+  expectedProd: 1.42,
+  deviation: -17.4,
+  declineRate: 2.3,
+  recoveryPotential: 1.24,
+  anomalyScore: 0.94,
+  status: 'ACTIVE',
+  onstreamYear: 1987,
+  baselineQI: 12500,
+  baselineDI: 0.032,
+  baselineB: 1.2,
+  operatingCostUsdM: 1.2,
+  interventionCostUsdM: 2.1,
+};
 
 export const AssetDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
-  const asset = useAssetData(id);
+  
+  const [asset, setAsset] = useState<AssetResponse | null>(null);
+  const [forecast30, setForecast30] = useState<ForecastResponse | null>(null);
+  const [forecast90, setForecast90] = useState<ForecastResponse | null>(null);
+  const [forecast180, setForecast180] = useState<ForecastResponse | null>(null);
+  const [aipsScore, setAipsScore] = useState<AIPSScoreResponse | null>(null);
+  const [shapExplanation, setShapExplanation] = useState<SHAPExplanationResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const [activeTab, setActiveTab] = useState<'production' | 'health' | 'ai'>('production');
   const [modalAction, setModalAction] = useState<string | null>(null);
 
+  const loadAssetData = async () => {
+    if (!id) return;
+    
+    setLoading(true);
+    setError(null);
+    try {
+      // Load asset details
+      const assetData = await assetsApi.get(id);
+      setAsset(assetData);
+
+      // Load forecasts for different horizons
+      const [f30, f90, f180] = await Promise.all([
+        forecastApi.get(id, 30),
+        forecastApi.get(id, 90),
+        forecastApi.get(id, 180),
+      ]);
+      setForecast30(f30);
+      setForecast90(f90);
+      setForecast180(f180);
+
+      // Load AIPS score
+      const aipsData = await aipsApi.getScore(id);
+      setAipsScore(aipsData);
+
+      // Load SHAP explanation
+      const shapData = await shapApi.getExplanation(id);
+      setShapExplanation(shapData);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load asset data');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadAssetData();
+  }, [id]);
+
+  // Fallback to mock data if API fails
+  const displayAsset = asset ? {
+    id: asset.id,
+    name: asset.name,
+    field: asset.field,
+    basin: asset.basin,
+    currentProd: asset.baseline_qi / 10000,
+    expectedProd: asset.baseline_qi * 1.1 / 10000,
+    deviation: -10,
+    declineRate: asset.baseline_di * 100,
+    recoveryPotential: asset.baseline_qi * 0.1 / 10000,
+    anomalyScore: 0.5,
+    status: asset.status,
+    onstreamYear: asset.onstream_year,
+    baselineQI: asset.baseline_qi,
+    baselineDI: asset.baseline_di,
+    baselineB: asset.baseline_b,
+    operatingCostUsdM: asset.operating_cost_usd_m,
+    interventionCostUsdM: asset.intervention_cost_usd_m,
+  } : mockAssetData;
+
   // Corrected AIPS calculation (single source of truth)
   const aipsResult = calculateAIPS({
-    asset_id: asset.id,
-    expected_production: asset.expectedProd,
-    actual_production: asset.currentProd,
+    asset_id: displayAsset.id,
+    expected_production: displayAsset.expectedProd,
+    actual_production: displayAsset.currentProd,
     anomaly_score: 0.94,
     historical_recovery_rate: 0.80,
     intervention_complexity: 0.60,
@@ -50,6 +143,59 @@ export const AssetDetail: React.FC = () => {
   return (
     <div style={{ backgroundColor: '#080909', minHeight: '100vh', color: '#F3EFE4', padding: '24px 32px', paddingBottom: '90px' }}>
       
+      {/* ERROR STATE */}
+      {error && (
+        <div style={{
+          backgroundColor: '#2D1A1A',
+          border: '1px solid #FF4444',
+          borderRadius: '8px',
+          padding: '16px 24px',
+          marginBottom: '24px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '12px'
+        }}>
+          <AlertTriangle size={20} style={{ color: '#FF4444' }} />
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 600, color: '#FF4444', marginBottom: '4px' }}>API Connection Error</div>
+            <div style={{ fontSize: '13px', color: '#B8B3A8' }}>{error}</div>
+          </div>
+          <button
+            onClick={loadAssetData}
+            style={{
+              backgroundColor: '#FF4444',
+              color: '#F3EFE4',
+              border: 'none',
+              padding: '8px 16px',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              fontWeight: 600,
+              fontSize: '13px'
+            }}
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
+      {/* LOADING STATE */}
+      {loading && !error && (
+        <div style={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '100px 32px',
+          gap: '16px'
+        }}>
+          <Loader2 size={48} style={{ color: '#FF9000' }} className="animate-spin" />
+          <div style={{ color: '#B8B3A8', fontSize: '14px' }}>Loading asset details...</div>
+        </div>
+      )}
+
+      {/* MAIN CONTENT */}
+      {!loading && !error && (
+      <>
       {/* BREADCRUMB & BACK BUTTON */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: '#B8B3A8' }}>
@@ -59,11 +205,11 @@ export const AssetDetail: React.FC = () => {
           <span>/</span>
           <span>Assets</span>
           <span>/</span>
-          <span style={{ color: '#F3EFE4', fontWeight: 700 }}>{asset.id}</span>
+          <span style={{ color: '#F3EFE4', fontWeight: 700 }}>{displayAsset.id}</span>
         </div>
 
         <div style={{ fontSize: '11px', color: '#B8B3A8' }}>
-          Asset ID: <strong style={{ color: '#FF9000' }}>{asset.id}</strong> | Field Ops Assigned
+          Asset ID: <strong style={{ color: '#FF9000' }}>{displayAsset.id}</strong> | Field Ops Assigned
         </div>
       </div>
 
@@ -507,7 +653,11 @@ export const AssetDetail: React.FC = () => {
         </h3>
 
         <div style={{ position: 'relative', paddingLeft: '24px', borderLeft: '2px solid #2A2D30', display: 'flex', flexDirection: 'column', gap: '20px' }}>
-          {asset.events.map((ev, idx) => (
+          {[
+            { date: '2026-08-15', title: 'Anomaly Detected', description: 'Production deviation of -17.4% detected', color: '#FF3B3B' },
+            { date: '2026-08-10', title: 'Pressure Alert', description: 'Pressure sensor PT-104 reading below threshold', color: '#FF9000' },
+            { date: '2026-08-05', title: 'Routine Maintenance', description: 'Scheduled maintenance completed successfully', color: '#00D966' },
+          ].map((ev: { date: string; title: string; description: string; color: string }, idx: number) => (
             <div key={idx} style={{ position: 'relative' }}>
               {/* Timeline Marker Dot */}
               <div style={{
@@ -532,10 +682,11 @@ export const AssetDetail: React.FC = () => {
                   padding: '2px 6px',
                   borderRadius: '4px'
                 }}>
-                  {ev.status}
+                  {ev.date}
                 </span>
-                <span style={{ fontSize: '13px', fontWeight: 600, color: '#F3EFE4' }}>{ev.label}</span>
+                <span style={{ fontSize: '13px', fontWeight: 600, color: '#F3EFE4' }}>{ev.title}</span>
               </div>
+              <div style={{ fontSize: '12px', color: '#B8B3A8', marginTop: '4px' }}>{ev.description}</div>
             </div>
           ))}
         </div>
@@ -645,8 +796,8 @@ export const AssetDetail: React.FC = () => {
             </div>
             <p style={{ fontSize: '13px', color: '#B8B3A8', margin: '14px 0' }}>
               {modalAction === 'investigate'
-                ? `Dispatch telemetry diagnostic task force for asset ${asset.id} (Pressure sensor PT-104 inspection).`
-                : (modalAction === 'simulate' ? `Initiate reservoir gas-lift simulation model targeting +0.18 MMBL recovery.` : `Asset ${asset.id} will be pinned to high-priority alert stream.`)}
+                ? `Dispatch telemetry diagnostic task force for asset ${displayAsset.id} (Pressure sensor PT-104 inspection).`
+                : (modalAction === 'simulate' ? `Initiate reservoir gas-lift simulation model targeting +0.18 MMBL recovery.` : `Asset ${displayAsset.id} will be pinned to high-priority alert stream.`)}
             </p>
             <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
               <button
@@ -658,6 +809,8 @@ export const AssetDetail: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+      </>
       )}
 
     </div>

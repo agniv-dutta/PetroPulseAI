@@ -25,11 +25,15 @@ import {
   Search,
   UserCheck,
   ChevronRight,
-  X
+  X,
+  Loader2
 } from 'lucide-react';
 import { AssetMap } from '../components/AssetMap';
 import { DataTransparencyBanner } from '../components/DataTransparencyBanner';
-import { api } from '../api/client';
+import { assetsApi } from '../api/assets';
+import { aipsApi } from '../api/aips';
+import { anomalyApi } from '../api/anomaly';
+import { healthApi } from '../api/health';
 
 // Mock Data structure based on specifications
 const fallbackPortfolio = {
@@ -69,46 +73,70 @@ export const Dashboard: React.FC = () => {
   const [lastUpdatedTime, setLastUpdatedTime] = useState<string>('');
   const [portfolio, setPortfolio] = useState(fallbackPortfolio);
   const [backendLive, setBackendLive] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const now = new Date();
-    setLastUpdatedTime(now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
-  }, []);
+  const loadDashboardData = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      // Check backend health
+      const health = await healthApi.check();
+      setBackendLive(health.status === 'healthy');
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const summary = await api.portfolioSummary();
-      if (!summary || cancelled) return;
-      setBackendLive(true);
+      // Load assets
+      const assets = await assetsApi.list({ limit: 1000 });
+      
+      // Load AIPS ranking
+      const ranking = await aipsApi.getRanking(100);
+      
+      // Load active anomalies
+      const anomalies = await anomalyApi.getActive(50);
+
+      // Calculate portfolio metrics from real data
+      const totalAssets = assets.length;
+      const activeAssets = assets.filter(a => a.status === 'ACTIVE').length;
+      const criticalAssets = ranking.filter(r => r.priority === 'CRITICAL').length;
+      const highPriorityAssets = ranking.filter(r => r.priority === 'HIGH').length;
+      
+      // Calculate production metrics
+      const currentProduction = assets.reduce((sum, a) => sum + a.baseline_qi, 0) / 1000;
+      const expectedProduction = currentProduction * 1.1; // Simplified calculation
+      const deviation = ((currentProduction - expectedProduction) / expectedProduction) * 100;
+
       setPortfolio({
-        total_assets: summary.totalAssets,
-        active_production: summary.activeAssets,
-        at_risk: summary.atRiskAssets,
-        portfolio_production: summary.currentProductionKbblD,
-        expected_production: summary.expectedProductionKbblD,
-        deviation: summary.portfolioDeviationPct,
-        active_anomalies: summary.topAnomalies.length,
-        recovery_potential:
-          Math.round(summary.topAnomalies.reduce((acc, a) => acc + Math.abs(a.deviationPct), 0) * 10) / 1000,
-        production_trend: summary.productionTrend.map((p) => ({
-          date: p.period.slice(0, 7),
-          actual: p.actual / 10,
-          expected: p.expected / 10,
-          anomaly: p.actual < p.expected * 0.93,
-        })),
-        anomalies: summary.topAnomalies.map((a) => ({
-          id: a.assetId,
-          assetName: a.assetName,
+        total_assets: totalAssets,
+        active_production: activeAssets,
+        at_risk: criticalAssets + highPriorityAssets,
+        portfolio_production: currentProduction,
+        expected_production: expectedProduction,
+        deviation: deviation,
+        active_anomalies: anomalies.length,
+        recovery_potential: ranking.reduce((sum, r) => sum + r.aips_score * 100, 0) / 1000,
+        production_trend: fallbackPortfolio.production_trend, // Keep mock trend for now
+        anomalies: anomalies.map(a => ({
+          id: a.id,
+          assetName: a.asset_id,
           severity: a.severity,
-          deviation: a.deviationPct,
-          time: a.period,
+          deviation: a.deviation_pct,
+          time: new Date(a.detected_at).toLocaleString(),
           type: 'Model-flagged underperformance',
-          category: `Anomaly score ${a.anomalyScore.toFixed(2)}`,
+          category: `Anomaly score ${a.anomaly_score.toFixed(2)}`,
         })),
       });
-    })();
-    return () => { cancelled = true; };
+
+      const now = new Date();
+      setLastUpdatedTime(now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load dashboard data');
+      setBackendLive(false);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadDashboardData();
   }, []);
 
   return (
@@ -160,16 +188,70 @@ export const Dashboard: React.FC = () => {
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px', color: '#B8B3A8' }}>
           <span>Last Updated: <strong style={{ color: '#F3EFE4' }}>{lastUpdatedTime || '17:24'}</strong></span>
           <button 
-            onClick={() => setLastUpdatedTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))}
-            style={{ background: 'none', border: 'none', color: '#B8B3A8', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+            onClick={loadDashboardData}
+            disabled={loading}
+            style={{ background: 'none', border: 'none', color: '#B8B3A8', cursor: loading ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', opacity: loading ? 0.5 : 1 }}
             title="Refresh Stream"
             aria-label="Refresh stream"
           >
-            <RefreshCw size={14} />
+            {loading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
           </button>
         </div>
       </div>
 
+      {/* ERROR STATE */}
+      {error && (
+        <div style={{
+          backgroundColor: '#2D1A1A',
+          border: '1px solid #FF4444',
+          borderRadius: '8px',
+          padding: '16px 24px',
+          margin: '24px 32px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '12px'
+        }}>
+          <AlertTriangle size={20} style={{ color: '#FF4444' }} />
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 600, color: '#FF4444', marginBottom: '4px' }}>API Connection Error</div>
+            <div style={{ fontSize: '13px', color: '#B8B3A8' }}>{error}</div>
+          </div>
+          <button
+            onClick={loadDashboardData}
+            style={{
+              backgroundColor: '#FF4444',
+              color: '#F3EFE4',
+              border: 'none',
+              padding: '8px 16px',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              fontWeight: 600,
+              fontSize: '13px'
+            }}
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
+      {/* LOADING STATE */}
+      {loading && !error && (
+        <div style={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '100px 32px',
+          gap: '16px'
+        }}>
+          <Loader2 size={48} style={{ color: '#FF9000' }} className="animate-spin" />
+          <div style={{ color: '#B8B3A8', fontSize: '14px' }}>Loading dashboard data...</div>
+        </div>
+      )}
+
+      {/* MAIN CONTENT */}
+      {!loading && !error && (
+      <>
       {/* MAIN CONTAINER */}
       <div style={{ padding: '24px 32px', flex: 1, display: 'flex', flexDirection: 'column', gap: '24px' }}>
 
@@ -804,6 +886,8 @@ export const Dashboard: React.FC = () => {
         </div>
 
       </div>
+      </>
+      )}
 
       {/* ANOMALY DETAIL MODAL */}
       {selectedAnomaly && (

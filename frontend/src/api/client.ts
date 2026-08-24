@@ -1,14 +1,100 @@
 /**
- * Typed API client for the PetroPulse AI backend.
- * Falls back gracefully — every call returns null on failure so pages can
- * render their offline/mock data instead of breaking the demo.
+ * Centralized HTTP client for the PetroPulse AI backend.
+ * Provides typed API calls with proper error handling and timeout support.
  */
 
-export const API_BASE =
-  (import.meta.env.VITE_API_URL as string | undefined) ?? '/api/v1'
+export const API_BASE_URL =
+  (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? 'http://localhost:8000/api/v1'
 
 export type DataClass = 'REAL' | 'SYNTHETIC' | 'DERIVED'
 
+export interface ApiError {
+  error: string
+  message: string
+  status_code: number
+  details?: Record<string, unknown>
+}
+
+class ApiClient {
+  private baseUrl: string
+
+  constructor(baseUrl: string) {
+    this.baseUrl = baseUrl
+  }
+
+  private async request<T>(
+    path: string,
+    options: RequestInit = {},
+    timeoutMs = 15000,
+  ): Promise<T> {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
+
+    try {
+      const response = await fetch(`${this.baseUrl}${path}`, {
+        ...options,
+        signal: controller.signal,
+        headers: {
+          'Content-Type': 'application/json',
+          ...options.headers,
+        },
+      })
+
+      clearTimeout(timer)
+
+      if (!response.ok) {
+        const error: ApiError = await response.json().catch(() => ({
+          error: 'NetworkError',
+          message: `HTTP ${response.status}: ${response.statusText}`,
+          status_code: response.status,
+        }))
+        throw new Error(error.message)
+      }
+
+      return (await response.json()) as T
+    } catch (error) {
+      clearTimeout(timer)
+      if (error instanceof Error) {
+        throw error
+      }
+      throw new Error('Unknown API error')
+    }
+  }
+
+  async get<T>(path: string, timeoutMs = 15000): Promise<T> {
+    return this.request<T>(path, { method: 'GET' }, timeoutMs)
+  }
+
+  async post<T>(path: string, body?: unknown, timeoutMs = 15000): Promise<T> {
+    return this.request<T>(
+      path,
+      {
+        method: 'POST',
+        body: body ? JSON.stringify(body) : undefined,
+      },
+      timeoutMs,
+    )
+  }
+
+  async patch<T>(path: string, body?: unknown, timeoutMs = 15000): Promise<T> {
+    return this.request<T>(
+      path,
+      {
+        method: 'PATCH',
+        body: body ? JSON.stringify(body) : undefined,
+      },
+      timeoutMs,
+    )
+  }
+
+  async delete<T>(path: string, timeoutMs = 15000): Promise<T> {
+    return this.request<T>(path, { method: 'DELETE' }, timeoutMs)
+  }
+}
+
+export const client = new ApiClient(API_BASE_URL)
+
+// Legacy types for backward compatibility
 export interface LeaderboardRow {
   id: string
   name: string
@@ -81,14 +167,10 @@ export interface TelemetryTick {
   source: 'SYNTHETIC'
 }
 
+// Legacy API object for backward compatibility
 async function get<T>(path: string, timeoutMs = 15000): Promise<T | null> {
   try {
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), timeoutMs)
-    const res = await fetch(`${API_BASE}${path}`, { signal: controller.signal })
-    clearTimeout(timer)
-    if (!res.ok) return null
-    return (await res.json()) as T
+    return await client.get<T>(path, timeoutMs)
   } catch {
     return null
   }
@@ -100,13 +182,16 @@ async function send<T>(
   body?: unknown,
 ): Promise<T | null> {
   try {
-    const res = await fetch(`${API_BASE}${path}`, {
-      method,
-      headers: body ? { 'Content-Type': 'application/json' } : undefined,
-      body: body ? JSON.stringify(body) : undefined,
-    })
-    if (!res.ok) return null
-    return (await res.json()) as T
+    switch (method) {
+      case 'POST':
+        return await client.post<T>(path, body)
+      case 'PATCH':
+        return await client.patch<T>(path, body)
+      case 'DELETE':
+        return await client.delete<T>(path)
+      default:
+        return null
+    }
   } catch {
     return null
   }

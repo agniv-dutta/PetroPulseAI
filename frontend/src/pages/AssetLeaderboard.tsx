@@ -8,11 +8,14 @@ import {
   ChevronRight,
   X,
   AlertOctagon,
-  Sliders
+  Sliders,
+  Loader2,
+  RefreshCw
 } from 'lucide-react';
 import { calculateAIPS } from '../utils/aipsCalculator';
 import type { AIPSPriority, AssetSeverity } from '../types';
-import { api } from '../api/client';
+import { aipsApi } from '../api/aips';
+import { assetsApi } from '../api/assets';
 
 export interface AssetItem {
   rank: number;
@@ -153,30 +156,48 @@ export const AssetLeaderboard: React.FC = () => {
   const navigate = useNavigate();
   const fallbackData = useMemo(() => generate128Assets(), []);
   const [rawData, setRawData] = useState<AssetItem[]>(fallbackData);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const res = await api.leaderboard();
-      if (!res || cancelled) return;
-      setRawData(
-        res.rows.map((r) => ({
+  const loadLeaderboardData = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const ranking = await aipsApi.getRanking(100);
+      const assets = await assetsApi.list({ limit: 1000 });
+
+      // Combine ranking data with asset details
+      const combinedData = ranking.map((r) => {
+        const asset = assets.find(a => a.id === r.asset_id);
+        const baselineQi = asset?.baseline_qi ?? 0;
+        const baselineDi = asset?.baseline_di ?? 0;
+        return {
           rank: r.rank,
-          id: r.id,
+          id: r.asset_id,
           field: r.field,
           basin: r.basin,
-          currentProd: r.currentProd,
-          expectedProd: r.expectedProd,
-          deviation: Math.round(r.deviation * 10) / 10,
-          declineRate: r.declineRate,
-          severity: (r.severity === 'ALERT' ? 'HIGH' : r.severity === 'WATCH' ? 'WATCH' : r.severity) as AssetSeverity,
-          recoveryPotential: r.recoveryPotential,
-          aipsScore: r.aipsScore,
+          currentProd: baselineQi,
+          expectedProd: baselineQi * 1.1,
+          deviation: -(baselineQi * 0.1),
+          declineRate: baselineDi,
+          severity: (r.priority === 'CRITICAL' ? 'CRITICAL' : r.priority === 'HIGH' ? 'HIGH' : r.priority === 'MEDIUM' ? 'WATCH' : 'NORMAL') as AssetSeverity,
+          recoveryPotential: r.aips_score * 100,
+          aipsScore: r.aips_score * 100,
           priority: r.priority as AIPSPriority,
-        })),
-      );
-    })();
-    return () => { cancelled = true; };
+        };
+      });
+
+      setRawData(combinedData);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load leaderboard data');
+      // Keep fallback data on error
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadLeaderboardData();
   }, []);
 
   // Filter States
@@ -332,6 +353,59 @@ export const AssetLeaderboard: React.FC = () => {
   return (
     <div style={{ backgroundColor: '#080909', minHeight: '100vh', color: '#F3EFE4', padding: '24px 32px' }}>
       
+      {/* ERROR STATE */}
+      {error && (
+        <div style={{
+          backgroundColor: '#2D1A1A',
+          border: '1px solid #FF4444',
+          borderRadius: '8px',
+          padding: '16px 24px',
+          marginBottom: '24px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '12px'
+        }}>
+          <AlertOctagon size={20} style={{ color: '#FF4444' }} />
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 600, color: '#FF4444', marginBottom: '4px' }}>API Connection Error</div>
+            <div style={{ fontSize: '13px', color: '#B8B3A8' }}>{error}</div>
+          </div>
+          <button
+            onClick={loadLeaderboardData}
+            style={{
+              backgroundColor: '#FF4444',
+              color: '#F3EFE4',
+              border: 'none',
+              padding: '8px 16px',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              fontWeight: 600,
+              fontSize: '13px'
+            }}
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
+      {/* LOADING STATE */}
+      {loading && !error && (
+        <div style={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '100px 32px',
+          gap: '16px'
+        }}>
+          <Loader2 size={48} style={{ color: '#FF9000' }} className="animate-spin" />
+          <div style={{ color: '#B8B3A8', fontSize: '14px' }}>Loading asset leaderboard...</div>
+        </div>
+      )}
+
+      {/* MAIN CONTENT */}
+      {!loading && !error && (
+      <>
       {/* 1. PAGE HEADER & FLEET KPIs */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '20px', marginBottom: '24px' }}>
         <div>
@@ -862,6 +936,8 @@ export const AssetLeaderboard: React.FC = () => {
           </button>
         </div>
       </div>
+      </>
+      )}
     </div>
   );
 };
