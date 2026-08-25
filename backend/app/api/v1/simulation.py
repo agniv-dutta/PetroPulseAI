@@ -104,6 +104,13 @@ async def inject_anomaly(simulation_id: str, payload: InjectAnomalyRequest) -> d
         raise HTTPException(422, str(exc))
 
 
+@router.post("/{simulation_id}/stop")
+async def stop_simulation_post(simulation_id: str) -> dict:
+    """Spec form: POST /simulation/{id}/stop -> final run summary."""
+    result = await SERVICE.stop(simulation_id)
+    return _snapshot_or_404(result)
+
+
 @router.delete("/{simulation_id}")
 async def stop_simulation(simulation_id: str) -> dict:
     await SERVICE.stop(simulation_id)

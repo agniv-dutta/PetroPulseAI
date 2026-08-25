@@ -30,7 +30,6 @@ import {
 } from 'lucide-react';
 import { AssetMap } from '../components/AssetMap';
 import { DataTransparencyBanner } from '../components/DataTransparencyBanner';
-import { assetsApi } from '../api/assets';
 import { aipsApi } from '../api/aips';
 import { anomalyApi } from '../api/anomaly';
 import { healthApi } from '../api/health';
@@ -84,44 +83,41 @@ export const Dashboard: React.FC = () => {
       const health = await healthApi.check();
       setBackendLive(health.status === 'healthy');
 
-      // Load assets
-      const assets = await assetsApi.list({ limit: 1000 });
-      
-      // Load AIPS ranking
+      // Load AIPS ranking + active anomalies (backend sources of truth)
       const ranking = await aipsApi.getRanking(100);
-      
-      // Load active anomalies
       const anomalies = await anomalyApi.getActive(50);
+      const rankRows = ranking?.rows ?? [];
+      const anomalyRows = anomalies?.rows ?? [];
 
-      // Calculate portfolio metrics from real data
-      const totalAssets = assets.length;
-      const activeAssets = assets.filter(a => a.status === 'ACTIVE').length;
-      const criticalAssets = ranking.filter(r => r.priority === 'CRITICAL').length;
-      const highPriorityAssets = ranking.filter(r => r.priority === 'HIGH').length;
-      
-      // Calculate production metrics
-      const currentProduction = assets.reduce((sum, a) => sum + a.baseline_qi, 0) / 1000;
-      const expectedProduction = currentProduction * 1.1; // Simplified calculation
-      const deviation = ((currentProduction - expectedProduction) / expectedProduction) * 100;
+      // Aggregate presentation metrics from backend values
+      const totalAssets = rankRows.length;
+      const criticalAssets = rankRows.filter(r => r.priority === 'CRITICAL').length;
+      const highPriorityAssets = rankRows.filter(r => r.priority === 'HIGH').length;
+
+      const currentProduction = rankRows.reduce((sum, r) => sum + (r.currentProdBblD ?? 0), 0) / 1000;
+      const expectedProduction = rankRows.reduce((sum, r) => sum + (r.expectedProdBblD ?? 0), 0) / 1000;
+      const deviation = expectedProduction > 0
+        ? ((currentProduction - expectedProduction) / expectedProduction) * 100
+        : 0;
 
       setPortfolio({
         total_assets: totalAssets,
-        active_production: activeAssets,
+        active_production: totalAssets,
         at_risk: criticalAssets + highPriorityAssets,
         portfolio_production: currentProduction,
         expected_production: expectedProduction,
         deviation: deviation,
-        active_anomalies: anomalies.length,
-        recovery_potential: ranking.reduce((sum, r) => sum + r.aips_score * 100, 0) / 1000,
+        active_anomalies: anomalyRows.length,
+        recovery_potential: rankRows.reduce((sum, r) => sum + (r.estimatedRecoveryMmbbl ?? 0), 0),
         production_trend: fallbackPortfolio.production_trend, // Keep mock trend for now
-        anomalies: anomalies.map(a => ({
-          id: a.id,
-          assetName: a.asset_id,
+        anomalies: anomalyRows.map((a, i) => ({
+          id: `${a.assetId}-${i}`,
+          assetName: a.assetId,
           severity: a.severity,
-          deviation: a.deviation_pct,
-          time: new Date(a.detected_at).toLocaleString(),
+          deviation: a.deviationPct,
+          time: new Date(a.detectedAt ?? Date.now()).toLocaleString(),
           type: 'Model-flagged underperformance',
-          category: `Anomaly score ${a.anomaly_score.toFixed(2)}`,
+          category: `Anomaly score ${a.anomalyScore.toFixed(2)}`,
         })),
       });
 

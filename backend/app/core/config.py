@@ -1,54 +1,75 @@
 from functools import lru_cache
-from pathlib import Path
+from typing import Dict, List
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
-BACKEND_DIR = Path(__file__).resolve().parents[2]
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
 
-    app_name: str = "PetroPulse AI Backend"
+    # Application
+    app_name: str = "PetroPulse AI"
     version: str = "1.0.0"
-    debug: bool = True
+    debug: bool = False
+
+    # API prefix (both spellings supported; main.py uses api_v1_prefix)
+    api_prefix: str = "/api/v1"
     api_v1_prefix: str = "/api/v1"
 
+    # Server
     host: str = "0.0.0.0"
     port: int = 8000
 
-    cors_origins: list[str] = [
+    # CORS
+    cors_origins: List[str] = [
         "http://localhost:5173",
         "http://localhost:4173",
-        "http://127.0.0.1:5173",
         "http://localhost:3000",
     ]
 
-    database_url: str = f"sqlite:///{BACKEND_DIR / 'petropulse.db'}"
+    # Database (SQLite by default so the demo runs with zero infrastructure;
+    # switch to postgresql+asyncpg://... for production deployments)
+    database_url: str = Field(
+        default="sqlite:///./petropulse.db",
+        description="SQLAlchemy database URL (sqlite or postgresql+asyncpg)",
+    )
 
-    redis_url: str = ""
-    celery_broker_url: str = ""
-    celery_result_backend: str = ""
+    # Redis (optional caching layer; the app degrades gracefully without it)
+    redis_url: str = "redis://localhost:6379/0"
+    redis_enabled: bool = False
 
-    seed_on_startup: bool = True
-    warm_cache_on_startup: bool = True
+    # Seeding
     seed_history_months: int = 36
     seed_random_seed: int = 42
 
-    simulation_tick_seconds: float = 2.0
-    simulation_max_sessions: int = 16
-    simulation_duration_default_ticks: int = 600
+    # Startup behaviour
+    warm_cache_on_startup: bool = True
 
-    # Decision-intelligence configuration (backend is the single source of truth)
-    aips_priority_thresholds: dict[str, float] = {
-        "CRITICAL": 80.0,
-        "HIGH": 60.0,
-        "MEDIUM": 40.0,
-    }
-    # Raw weighted AIPS sum at which the presented score equals 100.
-    # 27.72 / 30 x 100 ~= 92 reproduces the approved MH-07 reference scenario.
+    # Simulation defaults
+    simulation_tick_seconds: float = 0.05
+    simulation_max_sessions: int = 8
+    simulation_duration_default_ticks: int = 120
+
+    # AIPS configuration (approved formula constants)
     aips_scale_reference: float = 30.0
+    aips_priority_thresholds: Dict[str, float] = Field(
+        default_factory=lambda: {"CRITICAL": 80.0, "HIGH": 60.0, "MEDIUM": 40.0}
+    )
+
+    # Recovery estimation (approved historical intervention success rate)
     recovery_historical_rate: float = 0.80
+
+    # ML model artefacts (optional persistence locations)
+    model_cache_dir: str = "./models"
+
+    # Security
+    secret_key: str = "change-in-production"
 
 
 @lru_cache

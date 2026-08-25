@@ -64,9 +64,9 @@ export function useSimulationSocket(assetId: string) {
   const wsRef = useRef<WebSocket | null>(null)
 
   const start = useCallback(
-    async (scenario: string) => {
+    async (scenario: string, opts?: { speed_multiplier?: number }) => {
       setState((s) => ({ ...s, error: null, ticks: [] }))
-      const session = await api.startSimulation(assetId, scenario)
+      const session = await api.startSimulation(assetId, scenario, opts)
       if (!session) {
         setState((s) => ({
           ...s,
@@ -119,6 +119,21 @@ export function useSimulationSocket(assetId: string) {
     wsRef.current?.send(`SET_SCENARIO:${scenario}`)
   }, [])
 
+  const pause = useCallback(async () => {
+    if (state.sessionId) await api.pauseSimulation(state.sessionId)
+  }, [state.sessionId])
+
+  const resume = useCallback(async () => {
+    if (state.sessionId) await api.resumeSimulation(state.sessionId)
+  }, [state.sessionId])
+
+  const inject = useCallback(async (scenario: string) => {
+    if (!state.sessionId) return false
+    return (
+      (await api.injectAnomaly(state.sessionId, scenario)) !== null
+    )
+  }, [state.sessionId])
+
   useEffect(
     () => () => {
       const session = state.sessionId
@@ -129,5 +144,5 @@ export function useSimulationSocket(assetId: string) {
     [],
   )
 
-  return { ...state, start, setScenario }
+  return { ...state, start, setScenario, pause, resume, inject }
 }

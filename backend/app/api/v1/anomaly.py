@@ -1,136 +1,89 @@
-"""Anomaly detection API endpoints."""
+"""Anomaly endpoints (spec: /anomaly/active, /anomaly/{asset_id}).
 
-from datetime import date, datetime, timedelta, timezone
-from fastapi import APIRouter, Depends, HTTPException, Query
+Thin wrappers over the intelligence pipeline - the pipeline (Isolation
+Forest + seasonal Arps expectation) is the single source of truth for
+every anomaly score and severity band surfaced here.
+"""
+
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.models import AnomalyEvent, AnomalyResponse, ErrorResponse
-from app.services.anomaly_service import AnomalyService
+from app.intelligence.pipeline import analyze_asset, get_portfolio_analysis
+from app.ml.anomaly import severity_for_score
+from app.models import Asset
+from app.schemas.envelopes import (
+    AnomalyActiveResponse,
+    AnomalyAssetResponse,
+)
 
 router = APIRouter(prefix="/anomaly", tags=["anomaly"])
 
 
-@router.get(
-    "/active",
-    response_model=list[AnomalyResponse],
-    summary="Get active anomalies",
-    description="Retrieve all active (unacknowledged) anomalies across all assets.",
-    responses={
-        200: {"description": "Active anomalies retrieved successfully"},
-        500: {"model": ErrorResponse, "description": "Internal server error"},
-    },
-)
-def get_active_anomalies(
-    limit: int = Query(100, ge=1, le=1000, description="Maximum number of anomalies to return"),
-    db: Session = Depends(get_db),
-) -> list[AnomalyResponse]:
-    """Get all active anomalies across the portfolio."""
-    try:
-        from sqlalchemy import select
-        from app.models.enums import AnomalyStatus
-        
-        stmt = (
-            select(AnomalyEvent)
-            .where(AnomalyEvent.status == AnomalyStatus.ACTIVE)
-            .order_by(AnomalyEvent.detected_at.desc())
-            .limit(limit)
-        )
-        anomalies = list(db.execute(stmt).scalars().all())
-        
-        return [
-            AnomalyResponse(
-                id=a.id,
-                asset_id=a.asset_id,
-                detected_at=a.detected_at,
-                window_start=a.window_start,
-                window_end=a.window_end,
-                severity=a.severity,
-                anomaly_score=a.anomaly_score,
-                deviation_pct=a.deviation_pct,
-                expected_bbl_d=a.expected_bbl_d,
-                actual_bbl_d=a.actual_bbl_d,
-                contributing_features=a.contributing_features or [],
-                status=a.status,
-            )
-            for a in anomalies
-        ]
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=ErrorResponse(
-                error="AnomalyRetrievalError",
-                message=f"Failed to retrieve active anomalies: {str(e)}",
-                status_code=500,
-            ).model_dump(),
-        )
+def _latest_window(analysis: dict) -> dict | None:
+    windows = analysis.get("anomaly_windows") or []
+    return windows[-1] if windows else None
 
 
-@router.get(
-    "/{asset_id}",
-    response_model=list[AnomalyResponse],
-    summary="Get anomalies for asset",
-    description="Retrieve anomaly events for a specific asset.",
-    responses={
-        200: {"description": "Anomalies retrieved successfully"},
-        404: {"model": ErrorResponse, "description": "Asset not found"},
-        500: {"model": ErrorResponse, "description": "Internal server error"},
-    },
-)
-def get_asset_anomalies(
-    asset_id: str,
-    limit: int = Query(50, ge=1, le=500, description="Maximum number of anomalies to return"),
-    db: Session = Depends(get_db),
-) -> list[AnomalyResponse]:
-    """Get anomaly events for a specific asset."""
-    try:
-        from app.models import Asset
-        from sqlalchemy import select
-        
-        asset = db.get(Asset, asset_id)
-        if not asset:
-            raise HTTPException(
-                status_code=404,
-                detail=ErrorResponse(
-                    error="AssetNotFound",
-                    message=f"Asset {asset_id} not found",
-                    status_code=404,
-                ).model_dump(),
-            )
-        
-        stmt = (
-            select(AnomalyEvent)
-            .where(AnomalyEvent.asset_id == asset_id)
-            .order_by(AnomalyEvent.detected_at.desc())
-            .limit(limit)
-        )
-        anomalies = list(db.execute(stmt).scalars().all())
-        
-        return [
-            AnomalyResponse(
-                id=a.id,
-                asset_id=a.asset_id,
-                detected_at=a.detected_at,
-                window_start=a.window_start,
-                window_end=a.window_end,
-                severity=a.severity,
-                anomaly_score=a.anomaly_score,
-                deviation_pct=a.deviation_pct,
-                expected_bbl_d=a.expected_bbl_d,
-                actual_bbl_d=a.actual_bbl_d,
-                contributing_features=a.contributing_features or [],
-                status=a.status,
-            )
-            for a in anomalies
-        ]
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=ErrorResponse(
-                error="AnomalyRetrievalError",
-                message=f"Failed to retrieve asset anomalies: {str(e)}",
-                status_code=500,
-            ).model_dump(),
-        )
+@router.get("/active", response_model=AnomalyActiveResponse)
+def active_anomalies(db: Session = Depends(get_db)) -> dict:
+    """All portfolio assets whose latest anomaly score is >= WATCH."""
+    ranked = get_portfolio_analysis(db)
+    rows = []
+    for r in ranked:
+        score = float(r.get("anomaly_score", 0.0))
+        severity = severity_for_score(score)
+        if severity == "NORMAL":
+            continue
+        window = _latest_window(r)
+        rows.append({
+            "assetId": r["asset"]["id"],
+            "assetName": r["asset"]["name"],
+            "field": r["asset"].get("field"),
+            "basin": r["asset"].get("basin"),
+            "severity": severity,
+            "anomalyScore": round(score, 3),
+            "deviationPct": r.get("deviation_pct", 0.0),
+            "expectedBblD": r.get("expected_production_bbl_d"),
+            "actualBblD": r.get("current_production_bbl_d"),
+            "contributingFeatures": (window or {}).get("contributing_features", []),
+            "detectedAt": r.get("analyzed_at"),
+            "aipsPriority": r["aips"]["priority"],
+            "status": "ACTIVE",
+        })
+    rows.sort(key=lambda x: -x["anomalyScore"])
+    return {
+        "rows": rows,
+        "count": len(rows),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@router.get("/{asset_id}", response_model=AnomalyAssetResponse)
+def asset_anomalies(asset_id: str, db: Session = Depends(get_db)) -> dict:
+    asset = db.execute(
+        select(Asset).where(Asset.asset_id == asset_id)
+    ).scalars().first()
+    if not asset:
+        raise HTTPException(404, f"unknown asset {asset_id}")
+
+    analysis = analyze_asset(db, asset)
+    score = float(analysis.get("anomaly_score", 0.0))
+    window = _latest_window(analysis)
+    return {
+        "asset_id": asset_id,
+        "severity": severity_for_score(score),
+        "anomaly_score": round(score, 3),
+        "deviation_pct": analysis.get("deviation_pct", 0.0),
+        "windows": analysis.get("anomaly_windows", []),
+        "detector_metrics": analysis.get("detector_metrics"),
+        "explanation": (
+            (window or {}).get("contributing_features")
+            or [{"label": "No anomaly flagged for this asset", "importance": 0.0}]
+        ),
+        "data_source": analysis.get("data_source", "SYNTHETIC"),
+        "analyzed_at": analysis.get("analyzed_at"),
+    }

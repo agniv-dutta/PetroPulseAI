@@ -2,16 +2,31 @@
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from sqlalchemy.exc import OperationalError
 
-from app.api.v1 import assets, data, forecast, intel, simulation, system
+from app.api.v1 import (
+    aips,
+    anomaly,
+    assets,
+    data,
+    forecast,
+    health,
+    intel,
+    metrics,
+    shap,
+    simulation,
+    system,
+)
 from app.core.config import settings
 from app.core.database import SessionLocal, init_db
 from app.ingestion.seed import seed_database
 from app.intelligence.pipeline import warm_cache
 from app.services.simulation_service import get_simulation_service
-from app.utils.logger import setup_logger
+from app.utils.logger import logger, setup_logger
 
 logger = setup_logger("petropulse")
 
@@ -49,16 +64,28 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(assets.router, prefix=settings.api_v1_prefix)
-app.include_router(data.router, prefix=settings.api_v1_prefix)
-app.include_router(forecast.router, prefix=settings.api_v1_prefix)
-app.include_router(intel.router, prefix=settings.api_v1_prefix)
-app.include_router(system.router, prefix=settings.api_v1_prefix)
-app.include_router(simulation.router, prefix=settings.api_v1_prefix)
+# --------------------------------------------------------------------------
+# Routers
+# --------------------------------------------------------------------------
+for router in (
+    assets.router,
+    forecast.router,
+    anomaly.router,
+    aips.router,
+    shap.router,
+    intel.router,
+    metrics.router,
+    simulation.router,
+    system.router,
+    data.router,
+    health.router,
+):
+    app.include_router(router, prefix=settings.api_v1_prefix)
 
 
 @app.get("/health", tags=["system"])
-def health() -> dict:
+def root_health() -> dict:
+    """Root-level liveness probe (the spec'd /api/v1/health reports deps)."""
     return {
         "status": "ok",
         "service": settings.app_name,
@@ -67,30 +94,91 @@ def health() -> dict:
     }
 
 
+# --------------------------------------------------------------------------
+# Error envelopes (400 / 404 / 422 / 500 / 503 share one shape)
+# --------------------------------------------------------------------------
+def _error(error: str, message: str, status_code: int, details=None) -> JSONResponse:
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "error": error,
+            "message": message,
+            "status_code": status_code,
+            "details": details,
+        },
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_handler(request: Request, exc: RequestValidationError):
+    return _error(
+        "validation_error",
+        "request payload failed validation",
+        422,
+        details=[
+            {"loc": [str(p) for p in err.get("loc", [])],
+             "msg": err.get("msg"),
+             "type": err.get("type")}
+            for err in exc.errors()
+        ],
+    )
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    names = {400: "bad_request", 404: "not_found", 409: "conflict", 422: "validation_error"}
+    return _error(names.get(exc.status_code, "http_error"), str(exc.detail), exc.status_code)
+
+
+@app.exception_handler(OperationalError)
+async def database_unavailable_handler(request: Request, exc: OperationalError):
+    logger.error("database unavailable: %s", exc)
+    return _error("database_unavailable", "the database is not reachable", 503)
+
+
+@app.exception_handler(Exception)
+async def unhandled_handler(request: Request, exc: Exception):
+    logger.exception("unhandled error on %s %s", request.method, request.url.path)
+    return _error("internal_error", "an unexpected server error occurred", 500)
+
+
+# --------------------------------------------------------------------------
+# Simulation WebSocket
+# --------------------------------------------------------------------------
 @app.websocket("/ws/simulation/{session_id}")
 async def simulation_ws(websocket: WebSocket, session_id: str) -> None:
     service = get_simulation_service()
     await websocket.accept()
     if not service.get(session_id):
-        await websocket.send_json({"type": "error", "message": f"unknown session {session_id}"})
+        await websocket.send_json({
+            "type": "error",
+            "simulation_id": session_id,
+            "message": f"unknown session {session_id}",
+        })
         await websocket.close(code=4404)
         return
 
-    await service.attach(websocket, session_id)
+    await service.attach(websocket, session_id)   # emits simulation_started
     try:
         while True:
             message = await websocket.receive_text()
             if message.startswith("SET_SCENARIO:"):
                 scenario = message.split(":", 1)[1]
-                snap = await service.set_scenario(session_id, scenario)
+                snap = await service.inject_anomaly(session_id, scenario)
                 if snap:
                     await websocket.send_json({
-                        "type": "scenario_changed", "data": {"scenario": scenario},
+                        "type": "scenario_changed",
+                        "simulation_id": session_id,
+                        "data": {"scenario": scenario},
                     })
                 else:
-                    await websocket.send_json({"type": "error", "message": "unknown session"})
+                    await websocket.send_json({
+                        "type": "error",
+                        "simulation_id": session_id,
+                        "message": "unknown session",
+                    })
             elif message == "PING":
-                await websocket.send_json({"type": "pong"})
+                await websocket.send_json({"type": "pong", "simulation_id": session_id})
     except WebSocketDisconnect:
         pass
     finally:

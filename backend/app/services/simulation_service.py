@@ -81,6 +81,7 @@ class SimulationRun:
     buffer: deque = field(default_factory=deque)
     complexity: float = 0.5
     last_ml: dict = field(default_factory=dict)
+    last_priority: str | None = None
 
     def snapshot(self) -> dict:
         return {
@@ -289,6 +290,16 @@ class SimulationService:
             return None
         if run.task and not run.task.done():
             run.task.cancel()
+        await self._broadcast(run, {
+            "type": "simulation_stopped",
+            "simulation_id": simulation_id,
+            "message": f"simulation stopped after {run.ticks_sent} ticks",
+            "data": {
+                **run.snapshot(),
+                "last_ml": run.last_ml,
+                "observations_persisted": run.ticks_sent,
+            },
+        })
         for ws in list(run.clients):
             try:
                 await ws.close()
@@ -298,7 +309,17 @@ class SimulationService:
         run.status = SimulationStatus.STOPPED.value
         await self._persist_state(run, stopped=True)
         logger.info("simulation %s stopped after %d ticks", simulation_id, run.ticks_sent)
-        return {"session_id": simulation_id, **run.snapshot()}
+        return {
+            "session_id": simulation_id,
+            **run.snapshot(),
+            "summary": {
+                "ticks_streamed": run.ticks_sent,
+                "asset_id": run.config.asset_id,
+                "final_scenario": run.config.scenario_label,
+                "observations_persisted": run.ticks_sent,
+                "last_ml": run.last_ml,
+            },
+        }
 
     async def reset(self, simulation_id: str) -> dict | None:
         run = self._runs.get(simulation_id)
@@ -324,8 +345,15 @@ class SimulationService:
             return None
         if resolve_scenario(scenario) not in SCENARIOS:
             raise ValueError(f"scenario must be one of {sorted(SCENARIOS)}")
+        previous = run.config.scenario_label
         run.generator.set_scenario(scenario)
         run.config.scenario_label = scenario  # preserve caller's label verbatim
+        await self._broadcast(run, {
+            "type": "anomaly_injected",
+            "simulation_id": simulation_id,
+            "message": f"scenario '{scenario}' injected (was '{previous}')",
+            "data": {"previous": previous, "current": scenario},
+        })
         await self._persist_state(run)
         return {"session_id": simulation_id, **run.snapshot()}
 
@@ -339,6 +367,12 @@ class SimulationService:
         if not run:
             return False
         run.clients.add(websocket)
+        await self._broadcast(run, {
+            "type": "simulation_started",
+            "simulation_id": simulation_id,
+            "message": f"streaming {run.config.asset_id} ({run.config.scenario_label})",
+            "data": run.snapshot(),
+        })
         return True
 
     def detach(self, websocket: WebSocket, simulation_id: str) -> None:
@@ -346,19 +380,65 @@ class SimulationService:
         if run:
             run.clients.discard(websocket)
 
+    async def _broadcast(self, run: SimulationRun, payload: dict) -> None:
+        """Fan out a JSON message to every client attached to this run."""
+        for ws in list(run.clients):
+            try:
+                await ws.send_json(payload)
+            except Exception:
+                run.clients.discard(ws)
+
     # ----------------------------------------------------------- run loop
+    @staticmethod
+    def _telemetry_message(run: SimulationRun, obs: dict, ml: dict) -> dict:
+        """Spec-compliant flat telemetry payload.
+
+        Top-level fields follow the published WebSocket contract; the nested
+        ``data`` object is retained for backward compatibility with the
+        original frontend consumer.
+        """
+        return {
+            "type": "telemetry",
+            "timestamp": str(obs.get("timestamp")),
+            "asset_id": run.config.asset_id,
+            "source_type": "SYNTHETIC",
+            "production": float(obs["production_bbl_d"]),
+            "pressure": float(obs["pressure_bar"]),
+            "temperature": float(obs["temperature_c"]),
+            "flow_rate": float(obs["flow_rate_bbl_d"]),
+            "forecast": ml.get("forecast_30d"),
+            "anomaly_score": ml.get("anomaly_score"),
+            "severity": ml.get("severity"),
+            "aips_score": ml.get("aips_score"),
+            "priority": ml.get("priority"),
+            "recovery_opportunity": ml.get("estimated_recovery_mmbbl"),
+            "confidence": ml.get("combined_confidence"),
+            "data": {**obs, "ml": ml},   # legacy nested payload
+        }
+
     async def _run_loop(self, run: SimulationRun) -> None:
         try:
             while True:
                 await asyncio.sleep(run.config.wall_interval_seconds)
                 obs = run.generator.next_observation()
                 ml = self._infer(run, obs)
-                enriched = {
-                    "type": "telemetry",
-                    "data": {**obs, "ml": ml},
-                }
+                enriched = self._telemetry_message(run, obs, ml)
                 self._persist_observation(run, obs, ml)
                 run.ticks_sent += 1
+
+                priority = ml.get("priority")
+                if priority is not None and run.last_priority is not None \
+                        and priority != run.last_priority:
+                    await self._broadcast(run, {
+                        "type": "priority_changed",
+                        "simulation_id": run.simulation_id,
+                        "message": f"priority changed {run.last_priority} -> {priority}",
+                        "data": {"previous": run.last_priority, "current": priority,
+                                 "aips_score": ml.get("aips_score")},
+                    })
+                if priority is not None:
+                    run.last_priority = priority
+
                 for ws in list(run.clients):
                     try:
                         await ws.send_json(enriched)

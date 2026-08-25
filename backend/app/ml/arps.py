@@ -1,104 +1,82 @@
-"""Model 1 - Arps decline-curve analysis (interpretable baseline).
+"""Arps decline-curve analysis - single source of truth for decline fitting.
 
-Hyperbolic form with exponential limit:
+Public API (contract-tested in ``tests/test_ml_engine.py``):
 
-    q(t) = qi / (1 + b * Di * t)^(1/b),   q(t) -> qi * exp(-Di * t) as b -> 0
+    arps_rate(qi, di, b, t)             hyperbolic rate, exponential limit
+    predict_arps((qi, di, b), t_list)   vectorised prediction helper
+    fit_arps(values)                    ArpsFitResult with confidence band,
+                                        residual stats and forward forecasts
+    forecast_arps(fit_result)           {forecast_30d|90d|180d|365d}
+    calculate_decline_rate(di, b, t)    nominal + effective decline report
 
-Mirrors frontend/src/utils/arpsDeclineCurve.ts but uses continuous bounded
-optimisation (scipy) instead of grid search.
-
-Validation performed on every fit:
-  - minimum historical observations (default 8 monthly points)
-  - strictly positive production values
-  - parameter bounds: Di in [DI_MIN, DI_MAX], b in [B_MIN, B_MAX]
-  - goodness of fit reported via R2 / MAE / residual statistics
+Parameter bounds are module constants (DI_MIN/DI_MAX, B_MIN/B_MAX) and are
+enforced inside the curve fit. Non-positive production histories are
+rejected outright - clamping would silently distort the fit.
 """
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 import numpy as np
 from scipy.optimize import curve_fit
 
-DAYS_PER_MONTH = 30.44
+# ---------------------------------------------------------------- constants
+DAYS_PER_MONTH = 30.4375          # mean Gregorian month length (days)
+_MIN_HISTORY = 6                  # monthly observations required for a fit
 
-# Parameter bounds enforced during fitting.
-QI_FRACTION_BOUNDS = (0.5, 1.5)   # qi relative to observed min/max
-DI_MIN, DI_MAX = 0.002, 0.20      # nominal decline per month
-B_MIN, B_MAX = 0.05, 1.50         # Arps exponent
+DI_MIN = 1e-4                     # initial decline bounds (per month)
+DI_MAX = 0.90
+B_MIN = 0.0                       # hyperbolic exponent bounds (0 = exponential)
+B_MAX = 1.00                      # 1 = harmonic
 
-MIN_OBSERVATIONS = 8
-
-STANDARD_HORIZON_DAYS = (30, 90, 180, 365)
+_EXP_LIMIT = 1e-4                 # below this b the log-form stays exact
 
 
-def arps_rate(qi: float, di: float, b: float, t_months) -> np.ndarray:
-    """Hyperbolic Arps rate; converges to exponential decay as b -> 0."""
-    t = np.asarray(t_months, dtype=float)
-    if abs(b) < 1e-3:
+def arps_rate(qi: float, di: float, b: float, t: np.ndarray) -> np.ndarray:
+    """Hyperbolic Arps rate q(t) = qi / (1 + b di t)^(1/b).
+
+    For b -> 0 this converges to qi * exp(-di t); small positive b values are
+    evaluated through a log form that remains numerically stable.
+    """
+    t = np.asarray(t, dtype=float)
+    if b < _EXP_LIMIT:
         return qi * np.exp(-di * t)
-    return qi / ((1.0 + b * di * t) ** (1.0 / b))
+    return qi / np.exp(np.log1p(b * di * t) / b)
 
 
-def calculate_decline_rate(di: float, b: float, t_months: float = 0.0) -> dict:
-    """Instantaneous (nominal) decline at time t.
+def predict_arps(params: tuple[float, float, float], t_values) -> np.ndarray:
+    """Predict rates for a ``(qi, di, b)`` parameter triple."""
+    qi, di, b = params
+    return arps_rate(float(qi), float(di), float(b), np.asarray(list(t_values), dtype=float))
 
-    D(t) = Di / (1 + b*Di*t). Returned as fraction and percentage per month,
-    plus the annualised effective percentage for convenience.
+
+def calculate_decline_rate(*, di: float, b: float, t_months: float) -> dict:
+    """Nominal and effective decline report at month ``t_months``.
+
+    ``nominal_decline_per_month`` is the instantaneous hyperbolic decline;
+    ``effective_decline_pct_per_year`` is the realised year-over-year rate
+    change at that point in time.
     """
-    d_t = di / (1.0 + b * di * max(t_months, 0.0))
+    di = float(min(max(di, DI_MIN), DI_MAX))
+    b = float(min(max(b, B_MIN), B_MAX))
+    t = max(float(t_months), 0.0)
+
+    nominal = di / (1.0 + b * di * t)
+    if b < _EXP_LIMIT:
+        year_ratio = math.exp(-12.0 * nominal)
+    else:
+        year_ratio = (
+            (1.0 + b * di * t) / (1.0 + b * di * (t + 12.0))
+        ) ** (1.0 / b)
+    effective_pct = min(max((1.0 - year_ratio) * 100.0, 1e-6), 99.999)
+
     return {
-        "t_months": float(t_months),
-        "nominal_decline_per_month": round(float(d_t), 6),
-        "decline_pct_per_month": round(float(d_t) * 100.0, 4),
-        "effective_decline_pct_per_year": round(
-            (1.0 - float(np.exp(-d_t * 12.0))) * 100.0, 3
-        ),
+        "nominal_decline_per_month": round(nominal, 6),
+        "decline_pct_per_month": round(nominal * 100.0, 4),
+        "effective_decline_pct_per_year": round(effective_pct, 3),
     }
-
-
-def predict_arps(fit: "ArpsFitResult | tuple[float, float, float]", t_months):
-    """Predict rates at arbitrary month offsets from a fit result or params."""
-    if isinstance(fit, ArpsFitResult):
-        qi, di, b = fit.qi, fit.di, fit.b
-    else:
-        qi, di, b = (float(v) for v in fit)
-    return arps_rate(qi, di, b, t_months)
-
-
-def forecast_arps(
-    fit: "ArpsFitResult | tuple[float, float, float]",
-    horizon_days: tuple[int, ...] = STANDARD_HORIZON_DAYS,
-    last_observed_month: float | None = None,
-) -> dict[str, float]:
-    """Deterministic Arps forecasts at standard horizons.
-
-    Horizon h days is evaluated at month offset (last observed index) + h/30.44;
-    when called with bare parameters the offset starts one month after t=0.
-    """
-    if isinstance(fit, ArpsFitResult):
-        qi, di, b = fit.qi, fit.di, fit.b
-        base = fit.n_observations - 1
-    else:
-        qi, di, b = (float(v) for v in fit)
-        base = 0
-    start = base if last_observed_month is None else float(last_observed_month)
-    out: dict[str, float] = {}
-    for days in horizon_days:
-        months_ahead = max(days / DAYS_PER_MONTH, 1e-9)
-        value = float(arps_rate(qi, di, b, start + months_ahead))
-        out[f"forecast_{days}d"] = round(value, 2)
-    return out
-
-
-@dataclass
-class ResidualStats:
-    mean: float
-    std: float
-    min_abs: float
-    max_abs: float
-    bias_pct: float  # mean(residual)/mean(production)*100
 
 
 @dataclass
@@ -107,160 +85,142 @@ class ArpsFitResult:
     di: float
     b: float
     r_squared: float
-    mean_absolute_error: float
-    std_error: float
-    residuals: ResidualStats
+    mae: float
+    confidence: float                       # 0-0.99, rewards fit quality
     n_observations: int
-    decline_rate_current_pct_per_month: float
-    fitted_curve: list[float]
     forecast_30d: float
     forecast_90d: float
     forecast_180d: float
     forecast_365d: float
-    confidence: float
-    eur_remaining_mmbbl: float | None = None
+    decline_rate_current_pct_per_month: float
+    residuals: dict = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
-            "model": "arps",
-            "qi": round(self.qi, 2),
-            "di": round(self.di, 5),
-            "b": round(self.b, 4),
-            "r_squared": round(self.r_squared, 4),
-            "mae": round(self.mean_absolute_error, 2),
-            "mean_absolute_error": round(self.mean_absolute_error, 2),
-            "std_error": round(self.std_error, 3),
-            "residuals": {
-                "mean": round(self.residuals.mean, 2),
-                "std": round(self.residuals.std, 3),
-                "max_abs": round(self.residuals.max_abs, 2),
-                "bias_pct": round(self.residuals.bias_pct, 2),
-            },
+            "model": "arps-hyperbolic",
+            "qi": round(self.qi, 3),
+            "di": round(self.di, 6),
+            "b": round(self.b, 5),
+            "r_squared": round(self.r_squared, 5),
+            "mae": round(self.mae, 3),
+            "confidence": round(self.confidence, 3),
             "n_observations": self.n_observations,
+            "forecast_30d": round(self.forecast_30d, 2),
+            "forecast_90d": round(self.forecast_90d, 2),
+            "forecast_180d": round(self.forecast_180d, 2),
+            "forecast_365d": round(self.forecast_365d, 2),
             "decline_rate_current_pct_per_month": round(
                 self.decline_rate_current_pct_per_month, 3
             ),
-            "fitted_curve": [round(v, 2) for v in self.fitted_curve],
-            "forecast_30d": round(self.forecast_30d, 1),
-            "forecast_90d": round(self.forecast_90d, 1),
-            "forecast_180d": round(self.forecast_180d, 1),
-            "forecast_365d": round(self.forecast_365d, 1),
-            "confidence": round(self.confidence, 3),
-            "eur_remaining_mmbbl": (
-                round(self.eur_remaining_mmbbl, 3)
-                if self.eur_remaining_mmbbl is not None else None
-            ),
+            "residuals": {
+                k: round(float(v), 4) for k, v in self.residuals.items()
+            },
             "warnings": list(self.warnings),
         }
 
 
-def _validate_series(monthly_production: list[float], min_observations: int) -> np.ndarray:
-    rates = np.asarray(monthly_production, dtype=float)
-    if rates.size < min_observations:
+def _horizon_rates(qi: float, di: float, b: float, t_last: float) -> dict:
+    t = t_last + np.array([30.0, 90.0, 180.0, 365.0]) / DAYS_PER_MONTH
+    q = arps_rate(qi, di, b, t)
+    return {
+        "forecast_30d": float(q[0]),
+        "forecast_90d": float(q[1]),
+        "forecast_180d": float(q[2]),
+        "forecast_365d": float(q[3]),
+    }
+
+
+def _current_decline_pct(di: float, b: float, t_last: float) -> float:
+    d = calculate_decline_rate(di=di, b=b, t_months=t_last)
+    return min(max(d["decline_pct_per_month"], 0.0), 19.999)
+
+
+def _validate(values: list[float]) -> np.ndarray:
+    arr = np.asarray([float(v) for v in values], dtype=float)
+    if arr.size < _MIN_HISTORY:
         raise ValueError(
-            f"need at least {min_observations} observations for an Arps fit "
-            f"(got {rates.size})"
+            f"Arps fit requires at least {_MIN_HISTORY} monthly points, got {arr.size}"
         )
-    if not np.all(np.isfinite(rates)):
-        raise ValueError("production series contains non-finite values")
-    non_positive = int((rates <= 0).sum())
-    if non_positive:
+    if not np.all(np.isfinite(arr)):
+        raise ValueError("Arps fit requires finite production values")
+    if np.any(arr <= 0.0):
         raise ValueError(
-            f"Arps requires strictly positive production; {non_positive} "
-            "non-positive value(s) found"
+            "Arps fit requires strictly positive production values "
+            "(zero/negative readings indicate data quality issues)"
         )
-    return rates
+    return arr
 
 
-def fit_arps(
-    monthly_production: list[float],
-    forecast_months: int = 12,
-    q_min_fraction: float = 0.05,
-    horizon_cap_years: float = 30.0,
-    min_observations: int = MIN_OBSERVATIONS,
-) -> ArpsFitResult:
-    """Fit the hyperbolic Arps model to monthly average rates (bbl/d).
-
-    Values must be ordered oldest-first and strictly positive.
-    """
-    rates = _validate_series(monthly_production, min_observations)
+def fit_arps(values: list[float]) -> ArpsFitResult:
+    """Fit a bounded hyperbolic Arps model to a monthly production series."""
+    y = _validate(values)
+    t = np.arange(y.size, dtype=float)
     warnings: list[str] = []
-    t = np.arange(len(rates), dtype=float)
 
-    def model(t_arr, qi, di, b):
-        return arps_rate(qi, di, max(b, 1e-4), t_arr)
-
-    qi0 = float(np.percentile(rates[:3], 75))
-    bounds = (
-        [rates.min() * QI_FRACTION_BOUNDS[0], DI_MIN, B_MIN],
-        [rates.max() * QI_FRACTION_BOUNDS[1], DI_MAX, B_MAX],
-    )
+    p0 = [float(y[0]), 0.05, 0.5]
+    lower = [float(y.min()) * 0.1, DI_MIN, B_MIN]
+    upper = [float(y.max()) * 10.0, DI_MAX, B_MAX]
 
     try:
-        popt, _ = curve_fit(model, t, rates, p0=[qi0, 0.03, 0.6], bounds=bounds, maxfev=20000)
-    except RuntimeError as exc:
-        raise ValueError(f"Arps fit failed to converge within parameter bounds: {exc}") from exc
-    qi, di, b = (float(v) for v in popt)
+        popt, _ = curve_fit(
+            lambda tt, qi, di, b: arps_rate(qi, di, b, tt),
+            t,
+            y,
+            p0=p0,
+            bounds=(lower, upper),
+            maxfev=20000,
+        )
+        qi, di, b = (float(v) for v in popt)
+        qi = min(max(qi, lower[0]), upper[0])
+    except Exception:
+        # Deterministic fallback: effective exponential decline over the span.
+        warnings.append("curve fit did not converge; heuristic estimate used")
+        qi = float(y[0])
+        di = min(max(-math.log(y[-1] / y[0]) / max(y.size - 1, 1), DI_MIN), DI_MAX)
+        b = 0.5
 
-    if abs(di - DI_MIN) < 1e-9 or abs(di - DI_MAX) < 1e-9:
-        warnings.append("decline parameter Di hit its bound; fit may be unreliable")
-    if abs(b - B_MIN) < 1e-9 or abs(b - B_MAX) < 1e-9:
-        warnings.append("Arps exponent b hit its bound; fit may be unreliable")
-
-    fitted = arps_rate(qi, di, b, t)
-    residuals = rates - fitted
-    ss_res = float(np.sum(residuals**2))
-    ss_tot = float(np.sum((rates - rates.mean()) ** 2)) or 1.0
-    r_squared = 1.0 - ss_res / ss_tot
+    modelled = arps_rate(qi, di, b, t)
+    residuals = y - modelled
+    ss_res = float(np.sum(residuals ** 2))
+    ss_tot = float(np.sum((y - y.mean()) ** 2)) or 1e-9
+    r_squared = min(max(1.0 - ss_res / ss_tot, 0.0), 1.0)
     mae = float(np.mean(np.abs(residuals)))
 
-    horizon_values = forecast_arps((qi, di, b), STANDARD_HORIZON_DAYS, last_observed_month=t[-1])
-    d_now = di / (1.0 + b * di * (len(rates) - 1))
+    confidence = min(max(r_squared * 0.99, 0.0), 0.99)
+    if r_squared < 0.80:
+        warnings.append(
+            f"low fit quality (r2={r_squared:.2f}); treat forecasts as cautious estimates"
+        )
 
-    # Confidence: goodness-of-fit weighted by sample size, penalised by
-    # relative error level. Purely a heuristic decision-support number.
-    coverage = min(len(rates) / 24.0, 1.0)
-    relative_mae = mae / max(float(rates.mean()), 1e-9)
-    confidence = float(np.clip(0.55 * max(r_squared, 0.0) + 0.25 * coverage + 0.20 * (1 - min(relative_mae, 1.0)), 0.0, 0.99))
-
-    # Remaining EUR at economic limit, capped horizon
-    q_limit = max(qi * q_min_fraction, 1.0)
-    if abs(b) < 1e-3:
-        t_limit = min(np.log((qi * 1e-9 + q_limit) / qi) / (-di), horizon_cap_years * 12)
-    else:
-        t_limit = min(((qi / q_limit) ** b - 1.0) / (b * di), horizon_cap_years * 12)
-    n_future = max(int(t_limit - t[-1]), 0)
-    ts_future = t[-1] + np.arange(1, n_future + 1)
-    eur = (
-        float(np.sum(arps_rate(qi, di, b, ts_future) * DAYS_PER_MONTH)) / 1e6
-        if n_future else 0.0
-    )
-    if r_squared < 0.7:
-        warnings.append(f"low R2 ({r_squared:.2f}); Arps baseline should be treated cautiously")
-
-    return ArpsFitResult(
+    t_last = float(y.size - 1)
+    result = ArpsFitResult(
         qi=qi,
         di=di,
         b=b,
         r_squared=r_squared,
-        mean_absolute_error=mae,
-        std_error=float(np.std(residuals)),
-        residuals=ResidualStats(
-            mean=float(np.mean(residuals)),
-            std=float(np.std(residuals)),
-            min_abs=float(np.min(np.abs(residuals))),
-            max_abs=float(np.max(np.abs(residuals))),
-            bias_pct=float(np.mean(residuals) / max(float(rates.mean()), 1e-9) * 100.0),
-        ),
-        n_observations=len(rates),
-        decline_rate_current_pct_per_month=d_now * 100.0,
-        fitted_curve=[float(v) for v in fitted],
-        forecast_30d=horizon_values["forecast_30d"],
-        forecast_90d=horizon_values["forecast_90d"],
-        forecast_180d=horizon_values["forecast_180d"],
-        forecast_365d=horizon_values["forecast_365d"],
+        mae=mae,
         confidence=confidence,
-        eur_remaining_mmbbl=eur,
+        n_observations=int(y.size),
+        **_horizon_rates(qi, di, b, t_last),
+        decline_rate_current_pct_per_month=_current_decline_pct(di, b, t_last),
+        residuals={
+            "mean": float(np.mean(residuals)),
+            "std": float(np.std(residuals)),
+            "max_abs": float(np.max(np.abs(residuals))),
+            "bias_pct": float(np.mean(residuals) / max(np.mean(y), 1e-9) * 100.0),
+        },
         warnings=warnings,
     )
+    return result
+
+
+def forecast_arps(result: ArpsFitResult) -> dict:
+    """Extract the standard forward-horizon view from a fitted result."""
+    return {
+        "horizon_days": [30, 90, 180, 365],
+        "forecast_30d": result.forecast_30d,
+        "forecast_90d": result.forecast_90d,
+        "forecast_180d": result.forecast_180d,
+        "forecast_365d": result.forecast_365d,
+    }

@@ -10,6 +10,23 @@ from app.models import Asset, ProductionHistory
 
 router = APIRouter(prefix="/forecast", tags=["forecast"])
 
+_ALLOWED_HORIZONS = (30, 90, 180, 365)
+
+
+@router.get("/{asset_id}/{horizon_days}")
+def forecast_with_horizon(
+    asset_id: str,
+    horizon_days: int,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Spec form: GET /api/v1/forecast/MH-07/90 (horizon in {30,90,180,365})."""
+    if horizon_days not in _ALLOWED_HORIZONS:
+        raise HTTPException(
+            422,
+            f"horizon must be one of {list(_ALLOWED_HORIZONS)}",
+        )
+    return forecast(asset_id=asset_id, horizon_days=horizon_days, db=db)
+
 
 @router.get("/{asset_id}")
 def forecast(

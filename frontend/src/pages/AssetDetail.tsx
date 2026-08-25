@@ -28,43 +28,122 @@ import {
 import { RecoveryOpportunityCard } from '../components/RecoveryOpportunityCard';
 import { AIPSBreakdown } from '../components/AIPSBreakdown';
 import { SHAPExplanationCard } from '../components/SHAPExplanationCard';
-import { calculateAIPS } from '../utils/aipsCalculator';
 import { assetsApi } from '../api/assets';
-import { forecastApi } from '../api/forecast';
-import { aipsApi } from '../api/aips';
-import { shapApi } from '../api/shap';
-import type { AssetResponse, ForecastResponse, AIPSScoreResponse, SHAPExplanationResponse } from '../api/types';
 
-// Mock asset data for fallback
-const mockAssetData = {
-  id: 'MH-07',
-  name: 'Mumbai High North-7',
-  field: 'Mumbai High',
-  basin: 'Mumbai Offshore',
-  currentProd: 1.17,
-  expectedProd: 1.42,
-  deviation: -17.4,
-  declineRate: 2.3,
-  recoveryPotential: 1.24,
-  anomalyScore: 0.94,
-  status: 'ACTIVE',
-  onstreamYear: 1987,
-  baselineQI: 12500,
-  baselineDI: 0.032,
-  baselineB: 1.2,
-  operatingCostUsdM: 1.2,
-  interventionCostUsdM: 2.1,
+// Shape of GET /assets/{id} - produced by app.intelligence.pipeline.analyze_asset
+interface DetailBundle {
+  asset: {
+    id: string;
+    name: string;
+    field: string;
+    basin: string;
+    status: string;
+    onstream_year?: number | null;
+  };
+  current_production_bbl_d: number;
+  expected_production_bbl_d: number;
+  deviation_pct: number;
+  decline: {
+    qi: number;
+    di: number;
+    b: number;
+    r_squared: number;
+    confidence: number;
+    decline_rate_current_pct_per_month: number;
+    forecast_30d: number;
+    forecast_90d: number;
+    n_observations: number;
+  };
+  anomaly_score: number;
+  anomaly_windows: Array<{
+    period: string;
+    anomaly_score: number;
+    severity: string;
+    deviation_pct: number;
+    expected_bbl_d: number;
+    actual_bbl_d: number;
+    contributing_features: Array<{ label: string; importance: number }>;
+    explanation: string;
+  }>;
+  detector_metrics: Record<string, number> | null;
+  forecast: {
+    points: Array<{ day: number; forecast: number; lower: number; upper: number }>;
+    summary: {
+      forecast_30d: number;
+      forecast_90d: number;
+      forecast_180d: number;
+      forecast_365d: number;
+      residual_std: number;
+    };
+    models_used: string[];
+  };
+  attribution: {
+    terminology: string;
+    caveat: string;
+    base_value: number;
+    contributions: Array<{
+      feature: string;
+      label: string;
+      shap_value: number;
+      direction: 'UPWARD' | 'DOWNWARD';
+      relative_contribution_pct: number;
+    }>;
+  };
+  recovery: {
+    gap_bbl_d: number;
+    estimated_recovery_mmbbl: number;
+    estimated_value_usd_m: number;
+    historical_success_rate: number;
+    model_confidence: number;
+    combined_confidence: number;
+  };
+  aips: {
+    score: number;
+    priority: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
+    breakdown: {
+      loss_magnitude_pct: number;
+      anomaly_severity: number;
+      recovery_opportunity_pct: number;
+      intervention_complexity: number;
+    };
+    confidence_breakdown: {
+      historical_recovery_rate: number;
+      model_confidence: number;
+      combined_confidence: number;
+    };
+  };
+  recommendations: {
+    recommendations: Array<{
+      code: string;
+      action: string;
+      rationale: string;
+      priority: string;
+    }>;
+    summary: string;
+  };
+  data_source: string;
+  analyzed_at: string;
+  historical24m: Array<{
+    period: string;
+    actual: number;
+    expected: number;
+  }>;
+}
+
+const PRIORITY_COLOR: Record<string, string> = {
+  CRITICAL: '#FF3B3B',
+  HIGH: '#FF9000',
+  MEDIUM: '#FFD700',
+  LOW: '#00D966',
 };
+
+const fmt = (v: number | undefined | null) =>
+  v === undefined || v === null ? '---' : Math.round(v).toLocaleString();
 
 export const AssetDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
-  
-  const [asset, setAsset] = useState<AssetResponse | null>(null);
-  const [forecast30, setForecast30] = useState<ForecastResponse | null>(null);
-  const [forecast90, setForecast90] = useState<ForecastResponse | null>(null);
-  const [forecast180, setForecast180] = useState<ForecastResponse | null>(null);
-  const [aipsScore, setAipsScore] = useState<AIPSScoreResponse | null>(null);
-  const [shapExplanation, setShapExplanation] = useState<SHAPExplanationResponse | null>(null);
+
+  const [bundle, setBundle] = useState<DetailBundle | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -73,31 +152,13 @@ export const AssetDetail: React.FC = () => {
 
   const loadAssetData = async () => {
     if (!id) return;
-    
+
     setLoading(true);
     setError(null);
     try {
-      // Load asset details
-      const assetData = await assetsApi.get(id);
-      setAsset(assetData);
-
-      // Load forecasts for different horizons
-      const [f30, f90, f180] = await Promise.all([
-        forecastApi.get(id, 30),
-        forecastApi.get(id, 90),
-        forecastApi.get(id, 180),
-      ]);
-      setForecast30(f30);
-      setForecast90(f90);
-      setForecast180(f180);
-
-      // Load AIPS score
-      const aipsData = await aipsApi.getScore(id);
-      setAipsScore(aipsData);
-
-      // Load SHAP explanation
-      const shapData = await shapApi.getExplanation(id);
-      setShapExplanation(shapData);
+      // Canonical pipeline bundle - single backend source of truth
+      const detail = await assetsApi.get<DetailBundle>(id);
+      setBundle(detail);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load asset data');
     } finally {
@@ -107,38 +168,45 @@ export const AssetDetail: React.FC = () => {
 
   useEffect(() => {
     loadAssetData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
-  // Fallback to mock data if API fails
-  const displayAsset = asset ? {
-    id: asset.id,
-    name: asset.name,
-    field: asset.field,
-    basin: asset.basin,
-    currentProd: asset.baseline_qi / 10000,
-    expectedProd: asset.baseline_qi * 1.1 / 10000,
-    deviation: -10,
-    declineRate: asset.baseline_di * 100,
-    recoveryPotential: asset.baseline_qi * 0.1 / 10000,
-    anomalyScore: 0.5,
-    status: asset.status,
-    onstreamYear: asset.onstream_year,
-    baselineQI: asset.baseline_qi,
-    baselineDI: asset.baseline_di,
-    baselineB: asset.baseline_b,
-    operatingCostUsdM: asset.operating_cost_usd_m,
-    interventionCostUsdM: asset.intervention_cost_usd_m,
-  } : mockAssetData;
+  const d = bundle;
 
-  // Corrected AIPS calculation (single source of truth)
-  const aipsResult = calculateAIPS({
-    asset_id: displayAsset.id,
-    expected_production: displayAsset.expectedProd,
-    actual_production: displayAsset.currentProd,
-    anomaly_score: 0.94,
-    historical_recovery_rate: 0.80,
-    intervention_complexity: 0.60,
-  });
+  // ---- chart series derived from backend rows (presentation formatting only)
+  const history24M =
+    d?.historical24m.map((r) => ({
+      date: r.period.slice(0, 7),
+      actual: +(r.actual / 1e6).toFixed(3),
+      expected: +(r.expected / 1e6).toFixed(3),
+    })) ?? [];
+
+  const actualVsExpected12M = history24M.slice(-12);
+
+  const latestWindow = d?.anomaly_windows[d.anomaly_windows.length - 1];
+  const anomalyMonth = latestWindow?.period.slice(0, 7);
+
+  const forecastData = (() => {
+    if (!d) return [];
+    const anchor = d.historical24m[d.historical24m.length - 1];
+    const rows: Array<{ date: string; actual?: number; forecast?: number; lower?: number; upper?: number }> = [];
+    if (anchor) {
+      rows.push({
+        date: anchor.period.slice(0, 7),
+        actual: +(anchor.actual / 1e6).toFixed(3),
+        forecast: +(anchor.expected / 1e6).toFixed(3),
+      });
+    }
+    for (const p of d.forecast.points) {
+      rows.push({
+        date: new Date(Date.now() + p.day * 86400000).toISOString().slice(0, 7),
+        forecast: +(p.forecast / 1e6).toFixed(3),
+        lower: +(p.lower / 1e6).toFixed(3),
+        upper: +(p.upper / 1e6).toFixed(3),
+      });
+    }
+    return rows;
+  })();
 
   return (
     <div style={{ backgroundColor: '#080909', minHeight: '100vh', color: '#F3EFE4', padding: '24px 32px', paddingBottom: '90px' }}>
@@ -194,7 +262,7 @@ export const AssetDetail: React.FC = () => {
       )}
 
       {/* MAIN CONTENT */}
-      {!loading && !error && (
+      {!loading && !error && d && (
       <>
       {/* BREADCRUMB & BACK BUTTON */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
@@ -205,18 +273,18 @@ export const AssetDetail: React.FC = () => {
           <span>/</span>
           <span>Assets</span>
           <span>/</span>
-          <span style={{ color: '#F3EFE4', fontWeight: 700 }}>{displayAsset.id}</span>
+          <span style={{ color: '#F3EFE4', fontWeight: 700 }}>{d.asset.id}</span>
         </div>
 
         <div style={{ fontSize: '11px', color: '#B8B3A8' }}>
-          Asset ID: <strong style={{ color: '#FF9000' }}>{displayAsset.id}</strong> | Field Ops Assigned
+          Asset ID: <strong style={{ color: '#FF9000' }}>{d.asset.id}</strong> | Source: {d.data_source}
         </div>
       </div>
 
       {/* 1. ASSET HEADER CARD */}
       <div style={{
         background: 'linear-gradient(135deg, #1A1D1F 0%, #111313 100%)',
-        border: '1px solid #FF3B3B44',
+        border: `1px solid ${PRIORITY_COLOR[d.aips.priority]}44`,
         borderRadius: '10px',
         padding: '24px 28px',
         display: 'flex',
@@ -231,54 +299,54 @@ export const AssetDetail: React.FC = () => {
             width: '64px',
             height: '64px',
             borderRadius: '12px',
-            backgroundColor: '#FF3B3B22',
-            border: '2px solid #FF3B3B',
+            backgroundColor: `${PRIORITY_COLOR[d.aips.priority]}22`,
+            border: `2px solid ${PRIORITY_COLOR[d.aips.priority]}`,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            color: '#FF3B3B',
+            color: PRIORITY_COLOR[d.aips.priority],
             fontWeight: 900,
             fontSize: '20px'
           }}>
-            {asset.id.split('-')[0]}
+            {d.asset.id.split('-')[0]}
           </div>
 
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
               <h1 style={{ fontSize: '36px', fontWeight: 900, color: '#F3EFE4', margin: 0, letterSpacing: '-1px' }}>
-                {asset.id}
+                {d.asset.id}
               </h1>
               <span style={{
-                backgroundColor: '#FF3B3B22',
-                color: '#FF3B3B',
-                border: '1px solid #FF3B3B',
+                backgroundColor: `${PRIORITY_COLOR[d.aips.priority]}22`,
+                color: PRIORITY_COLOR[d.aips.priority],
+                border: `1px solid ${PRIORITY_COLOR[d.aips.priority]}`,
                 fontSize: '11px',
                 fontWeight: 800,
                 padding: '4px 10px',
                 borderRadius: '12px',
                 letterSpacing: '0.05em'
               }}>
-                ● {asset.severity} PRIORITY
+                ● {d.aips.priority} PRIORITY
               </span>
             </div>
             <div style={{ fontSize: '13px', color: '#B8B3A8', marginTop: '4px' }}>
-              {asset.field} • <span style={{ color: '#F3EFE4' }}>{asset.basin}</span>
+              {d.asset.name} • {d.asset.field} • <span style={{ color: '#F3EFE4' }}>{d.asset.basin}</span>
             </div>
           </div>
         </div>
 
         <div style={{ display: 'flex', gap: '32px', alignItems: 'center' }}>
           <div>
-            <div style={{ fontSize: '10px', color: '#B8B3A8', fontWeight: 700, textTransform: 'uppercase' }}>LAST TELEMETRY UPDATE</div>
+            <div style={{ fontSize: '10px', color: '#B8B3A8', fontWeight: 700, textTransform: 'uppercase' }}>LAST ANALYSIS</div>
             <div style={{ fontSize: '14px', fontWeight: 700, color: '#F3EFE4', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <Clock size={14} color="#00D966" /> {asset.lastUpdate}
+              <Clock size={14} color="#00D966" /> {new Date(d.analyzed_at).toLocaleString()}
             </div>
           </div>
 
           <div style={{ textAlign: 'right' }}>
             <div style={{ fontSize: '10px', color: '#B8B3A8', fontWeight: 700, textTransform: 'uppercase' }}>AIPS PRIORITY SCORE</div>
-            <div style={{ fontSize: '32px', fontWeight: 900, color: '#FF3B3B', lineHeight: 1 }}>
-              {asset.aipsScore} <span style={{ fontSize: '12px', color: '#B8B3A8' }}>/ 100</span>
+            <div style={{ fontSize: '32px', fontWeight: 900, color: PRIORITY_COLOR[d.aips.priority], lineHeight: 1 }}>
+              {d.aips.score.toFixed(1)} <span style={{ fontSize: '12px', color: '#B8B3A8' }}>/ 100</span>
             </div>
           </div>
         </div>
@@ -342,13 +410,13 @@ export const AssetDetail: React.FC = () => {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
                 <div>
                   <h3 style={{ fontSize: '15px', fontWeight: 700, color: '#F3EFE4', margin: 0 }}>Historical Production Trend</h3>
-                  <span style={{ fontSize: '11px', color: '#B8B3A8' }}>24-Month Trajectory (MMBL)</span>
+                  <span style={{ fontSize: '11px', color: '#B8B3A8' }}>24-Month Trajectory (MMbbl/month)</span>
                 </div>
                 <span style={{ fontSize: '11px', color: '#FF9000', fontWeight: 700 }}>● Actual Prod</span>
               </div>
               <div style={{ width: '100%', height: '260px' }}>
                 <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={asset.historical24M} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                  <AreaChart data={history24M} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                     <defs>
                       <linearGradient id="colorHist" x1="0" y1="0" x2="0" y2="1">
                         <stop offset="5%" stopColor="#FF9000" stopOpacity={0.4} />
@@ -357,7 +425,7 @@ export const AssetDetail: React.FC = () => {
                     </defs>
                     <CartesianGrid strokeDasharray="3 3" stroke="#2A2D30" />
                     <XAxis dataKey="date" stroke="#B8B3A8" fontSize={10} tickLine={false} />
-                    <YAxis stroke="#B8B3A8" fontSize={10} domain={[1.0, 2.0]} tickLine={false} />
+                    <YAxis stroke="#B8B3A8" fontSize={10} domain={['auto', 'auto']} tickLine={false} />
                     <Tooltip contentStyle={{ backgroundColor: '#111313', borderColor: '#2A2D30', color: '#F3EFE4' }} />
                     <Area type="monotone" dataKey="actual" stroke="#FF9000" strokeWidth={2} fill="url(#colorHist)" />
                   </AreaChart>
@@ -370,7 +438,7 @@ export const AssetDetail: React.FC = () => {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
                 <div>
                   <h3 style={{ fontSize: '15px', fontWeight: 700, color: '#F3EFE4', margin: 0 }}>Actual vs Expected Production</h3>
-                  <span style={{ fontSize: '11px', color: '#B8B3A8' }}>Last 12 Months with Anomaly Region</span>
+                  <span style={{ fontSize: '11px', color: '#B8B3A8' }}>Last 12 Months{anomalyMonth ? ' with Anomaly Region' : ''}</span>
                 </div>
                 <div style={{ display: 'flex', gap: '12px', fontSize: '11px' }}>
                   <span style={{ color: '#FF9000', fontWeight: 700 }}>● Actual</span>
@@ -379,13 +447,14 @@ export const AssetDetail: React.FC = () => {
               </div>
               <div style={{ width: '100%', height: '260px' }}>
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={asset.actualVsExpected12M} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                  <LineChart data={actualVsExpected12M} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#2A2D30" />
                     <XAxis dataKey="date" stroke="#B8B3A8" fontSize={10} tickLine={false} />
-                    <YAxis stroke="#B8B3A8" fontSize={10} domain={[1.0, 1.6]} tickLine={false} />
+                    <YAxis stroke="#B8B3A8" fontSize={10} domain={['auto', 'auto']} tickLine={false} />
                     <Tooltip contentStyle={{ backgroundColor: '#111313', borderColor: '#2A2D30', color: '#F3EFE4' }} />
-                    {/* Anomaly highlight window */}
-                    <ReferenceArea x1="2026-03" x2="2026-08" fill="#FF3B3B" fillOpacity={0.2} stroke="#FF3B3B" strokeDasharray="3 3" />
+                    {anomalyMonth && (
+                      <ReferenceArea x1={anomalyMonth} x2={actualVsExpected12M[actualVsExpected12M.length - 1]?.date ?? anomalyMonth} fill="#FF3B3B" fillOpacity={0.15} stroke="#FF3B3B" strokeDasharray="3 3" />
+                    )}
                     <Line type="monotone" dataKey="actual" stroke="#FF9000" strokeWidth={3} dot={false} />
                     <Line type="monotone" dataKey="expected" stroke="#B8B3A8" strokeDasharray="5 5" strokeWidth={2} dot={false} />
                   </LineChart>
@@ -397,27 +466,30 @@ export const AssetDetail: React.FC = () => {
           {/* c) Production Forecast Chart (90D Horizon) */}
           <div style={{ backgroundColor: '#1A1D1F', border: '1px solid #2A2D30', borderRadius: '8px', padding: '20px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-              <div>
-                <h3 style={{ fontSize: '15px', fontWeight: 700, color: '#F3EFE4', margin: 0 }}>Production Forecast (90D Horizon)</h3>
-                <span style={{ fontSize: '11px', color: '#B8B3A8' }}>AI Predictive Model with 90% Confidence Interval</span>
+                <div>
+                  <h3 style={{ fontSize: '15px', fontWeight: 700, color: '#F3EFE4', margin: 0 }}>Production Forecast (12M Horizon)</h3>
+                  <span style={{ fontSize: '11px', color: '#B8B3A8' }}>
+                    {d.forecast.models_used.join(' + ') || 'Forecasting ensemble'} · 80% confidence band
+                  </span>
+                </div>
+                <span style={{ backgroundColor: '#C7F70022', color: '#C7F700', border: '1px solid #C7F700', padding: '4px 8px', borderRadius: '4px', fontSize: '10px', fontWeight: 800 }}>
+                  ARPS FIT R²: {d.decline.r_squared.toFixed(3)}
+                </span>
               </div>
-              <span style={{ backgroundColor: '#C7F70022', color: '#C7F700', border: '1px solid #C7F700', padding: '4px 8px', borderRadius: '4px', fontSize: '10px', fontWeight: 800 }}>
-                AI MODEL ACCURACY: 94.2%
-              </span>
-            </div>
-            <div style={{ width: '100%', height: '240px' }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={asset.forecastData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#2A2D30" />
-                  <XAxis dataKey="date" stroke="#B8B3A8" fontSize={10} tickLine={false} />
-                  <YAxis stroke="#B8B3A8" fontSize={10} domain={[0.9, 1.6]} tickLine={false} />
-                  <Tooltip contentStyle={{ backgroundColor: '#111313', borderColor: '#2A2D30', color: '#F3EFE4' }} />
-                  <Area type="monotone" dataKey="upper" stroke="none" fill="#C7F700" fillOpacity={0.25} />
-                  <Line type="monotone" dataKey="actual" stroke="#FF9000" strokeWidth={3} dot={true} />
-                  <Line type="monotone" dataKey="forecast" stroke="#C7F700" strokeDasharray="4 4" strokeWidth={3} dot={true} />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
+              <div style={{ width: '100%', height: '240px' }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={forecastData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#2A2D30" />
+                    <XAxis dataKey="date" stroke="#B8B3A8" fontSize={10} tickLine={false} />
+                    <YAxis stroke="#B8B3A8" fontSize={10} domain={['auto', 'auto']} tickLine={false} />
+                    <Tooltip contentStyle={{ backgroundColor: '#111313', borderColor: '#2A2D30', color: '#F3EFE4' }} />
+                    <Area type="monotone" dataKey="upper" stroke="none" fill="#C7F700" fillOpacity={0.18} />
+                    <Area type="monotone" dataKey="lower" stroke="none" fill="#080909" fillOpacity={0.9} />
+                    <Line type="monotone" dataKey="actual" stroke="#FF9000" strokeWidth={3} dot={true} />
+                    <Line type="monotone" dataKey="forecast" stroke="#C7F700" strokeDasharray="4 4" strokeWidth={3} dot={true} />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
           </div>
 
           {/* d) Production Metrics Table */}
@@ -426,27 +498,29 @@ export const AssetDetail: React.FC = () => {
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px', fontSize: '13px' }}>
               <div style={{ backgroundColor: '#1A1D1F', padding: '12px 16px', borderRadius: '6px', border: '1px solid #2A2D30' }}>
                 <span style={{ fontSize: '11px', color: '#B8B3A8' }}>Current Production</span>
-                <div style={{ fontSize: '20px', fontWeight: 800, color: '#F3EFE4', marginTop: '4px' }}>1.17 MMBL</div>
+                <div style={{ fontSize: '20px', fontWeight: 800, color: '#F3EFE4', marginTop: '4px' }}>{fmt(d.current_production_bbl_d)} <span style={{ fontSize: '11px' }}>BBL/D</span></div>
               </div>
               <div style={{ backgroundColor: '#1A1D1F', padding: '12px 16px', borderRadius: '6px', border: '1px solid #2A2D30' }}>
-                <span style={{ fontSize: '11px', color: '#B8B3A8' }}>Expected Production</span>
-                <div style={{ fontSize: '20px', fontWeight: 800, color: '#B8B3A8', marginTop: '4px' }}>1.42 MMBL</div>
+                <span style={{ fontSize: '11px', color: '#B8B3A8' }}>Expected Production (Arps)</span>
+                <div style={{ fontSize: '20px', fontWeight: 800, color: '#B8B3A8', marginTop: '4px' }}>{fmt(d.expected_production_bbl_d)} <span style={{ fontSize: '11px' }}>BBL/D</span></div>
               </div>
-              <div style={{ backgroundColor: '#1A1D1F', padding: '12px 16px', borderRadius: '6px', border: '1px solid #FF3B3B44' }}>
+              <div style={{ backgroundColor: '#1A1D1F', padding: '12px 16px', borderRadius: '6px', border: `1px solid ${d.deviation_pct < -5 ? '#FF3B3B44' : '#2A2D30'}` }}>
                 <span style={{ fontSize: '11px', color: '#B8B3A8' }}>Deviation</span>
-                <div style={{ fontSize: '20px', fontWeight: 800, color: '#FF3B3B', marginTop: '4px' }}>-0.25 MMBL (-17.4%)</div>
+                <div style={{ fontSize: '20px', fontWeight: 800, color: d.deviation_pct < -5 ? '#FF3B3B' : '#00D966', marginTop: '4px' }}>
+                  {d.deviation_pct >= 0 ? '+' : ''}{d.deviation_pct.toFixed(1)}%
+                </div>
               </div>
               <div style={{ backgroundColor: '#1A1D1F', padding: '12px 16px', borderRadius: '6px', border: '1px solid #2A2D30' }}>
                 <span style={{ fontSize: '11px', color: '#B8B3A8' }}>Forecast (30D)</span>
-                <div style={{ fontSize: '20px', fontWeight: 800, color: '#C7F700', marginTop: '4px' }}>1.21 MMBL</div>
+                <div style={{ fontSize: '20px', fontWeight: 800, color: '#C7F700', marginTop: '4px' }}>{fmt(d.forecast.summary.forecast_30d)} <span style={{ fontSize: '11px' }}>BBL/D</span></div>
               </div>
               <div style={{ backgroundColor: '#1A1D1F', padding: '12px 16px', borderRadius: '6px', border: '1px solid #2A2D30' }}>
                 <span style={{ fontSize: '11px', color: '#B8B3A8' }}>Forecast (90D)</span>
-                <div style={{ fontSize: '20px', fontWeight: 800, color: '#C7F700', marginTop: '4px' }}>1.24 MMBL</div>
+                <div style={{ fontSize: '20px', fontWeight: 800, color: '#C7F700', marginTop: '4px' }}>{fmt(d.forecast.summary.forecast_90d)} <span style={{ fontSize: '11px' }}>BBL/D</span></div>
               </div>
-              <div style={{ backgroundColor: '#1A1D1F', padding: '12px 16px', borderRadius: '6px', border: '1px solid #2A2D30' }}>
-                <span style={{ fontSize: '11px', color: '#B8B3A8' }}>Decline Rate</span>
-                <div style={{ fontSize: '20px', fontWeight: 800, color: '#FF9000', marginTop: '4px' }}>2.3% / month</div>
+              <div style={{ backgroundColor: '#1A1D1F', padding: '12px 16px', borderRadius: '6px', border: '1px solid #FF900044' }}>
+                <span style={{ fontSize: '11px', color: '#B8B3A8' }}>Decline Rate (fitted Arps)</span>
+                <div style={{ fontSize: '20px', fontWeight: 800, color: '#FF9000', marginTop: '4px' }}>{d.decline.decline_rate_current_pct_per_month.toFixed(2)}% / month</div>
               </div>
             </div>
           </div>
@@ -460,10 +534,10 @@ export const AssetDetail: React.FC = () => {
           
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '24px' }}>
             
-            {/* a) Health Score Gauge */}
+            {/* a) AIPS Score Gauge (backend score) */}
             <div style={{ backgroundColor: '#1A1D1F', border: '1px solid #2A2D30', borderRadius: '8px', padding: '24px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-              <h3 style={{ fontSize: '15px', fontWeight: 700, color: '#F3EFE4', marginBottom: '16px' }}>Asset Health Score</h3>
-              
+              <h3 style={{ fontSize: '15px', fontWeight: 700, color: '#F3EFE4', marginBottom: '16px' }}>AIPS Priority Score</h3>
+
               <div style={{ position: 'relative', width: '160px', height: '160px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <svg width="160" height="160" viewBox="0 0 100 100">
                   <circle cx="50" cy="50" r="42" stroke="#2A2D30" strokeWidth="8" fill="none" />
@@ -471,29 +545,34 @@ export const AssetDetail: React.FC = () => {
                     cx="50"
                     cy="50"
                     r="42"
-                    stroke="#FF9000"
+                    stroke={PRIORITY_COLOR[d.aips.priority]}
                     strokeWidth="8"
                     fill="none"
                     strokeDasharray="264"
-                    strokeDashoffset={264 * (1 - asset.healthScore / 100)}
+                    strokeDashoffset={264 * (1 - Math.min(d.aips.score, 100) / 100)}
                     strokeLinecap="round"
                     transform="rotate(-90 50 50)"
                   />
                 </svg>
                 <div style={{ position: 'absolute', textAlign: 'center' }}>
-                  <div style={{ fontSize: '36px', fontWeight: 900, color: '#FF9000', lineHeight: 1 }}>{asset.healthScore}%</div>
-                  <div style={{ fontSize: '11px', color: '#B8B3A8', marginTop: '4px' }}>MODERATE RISK</div>
+                  <div style={{ fontSize: '36px', fontWeight: 900, color: PRIORITY_COLOR[d.aips.priority], lineHeight: 1 }}>{d.aips.score.toFixed(0)}</div>
+                  <div style={{ fontSize: '11px', color: '#B8B3A8', marginTop: '4px' }}>{d.aips.priority} PRIORITY</div>
                 </div>
               </div>
             </div>
 
             {/* b) 2x2 Status Cards */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-              <div style={{ backgroundColor: '#1A1D1F', border: '1px solid #FF3B3B44', borderRadius: '8px', padding: '16px' }}>
+              <div style={{ backgroundColor: '#1A1D1F', border: `1px solid ${latestWindow && latestWindow.severity !== 'NORMAL' ? '#FF3B3B44' : '#2A2D30'}`, borderRadius: '8px', padding: '16px' }}>
                 <span style={{ fontSize: '11px', color: '#B8B3A8', fontWeight: 700 }}>ANOMALY STATUS</span>
                 <div style={{ marginTop: '8px' }}>
-                  <span style={{ backgroundColor: '#FF3B3B22', color: '#FF3B3B', border: '1px solid #FF3B3B', padding: '4px 8px', borderRadius: '4px', fontWeight: 800, fontSize: '12px' }}>
-                    CRITICAL
+                  <span style={{
+                    backgroundColor: `${latestWindow && latestWindow.severity !== 'NORMAL' ? '#FF3B3B' : '#00D966'}22`,
+                    color: latestWindow && latestWindow.severity !== 'NORMAL' ? '#FF3B3B' : '#00D966',
+                    border: `1px solid ${latestWindow && latestWindow.severity !== 'NORMAL' ? '#FF3B3B' : '#00D966'}`,
+                    padding: '4px 8px', borderRadius: '4px', fontWeight: 800, fontSize: '12px'
+                  }}>
+                    {latestWindow ? latestWindow.severity : 'NORMAL'}
                   </span>
                 </div>
               </div>
@@ -501,8 +580,8 @@ export const AssetDetail: React.FC = () => {
               <div style={{ backgroundColor: '#1A1D1F', border: '1px solid #2A2D30', borderRadius: '8px', padding: '16px' }}>
                 <span style={{ fontSize: '11px', color: '#B8B3A8', fontWeight: 700 }}>PRODUCTION STATUS</span>
                 <div style={{ marginTop: '8px' }}>
-                  <span style={{ backgroundColor: '#FF900022', color: '#FF9000', border: '1px solid #FF9000', padding: '4px 8px', borderRadius: '4px', fontWeight: 800, fontSize: '12px' }}>
-                    DECLINING
+                  <span style={{ backgroundColor: d.deviation_pct < -5 ? '#FF900022' : '#00D96622', color: d.deviation_pct < -5 ? '#FF9000' : '#00D966', border: `1px solid ${d.deviation_pct < -5 ? '#FF9000' : '#00D966'}`, padding: '4px 8px', borderRadius: '4px', fontWeight: 800, fontSize: '12px' }}>
+                    {d.deviation_pct < -10 ? 'SHARP DECLINE' : d.deviation_pct < -5 ? 'DECLINING' : d.deviation_pct < 0 ? 'BELOW TARGET' : 'ON TARGET'}
                   </span>
                 </div>
               </div>
@@ -511,71 +590,60 @@ export const AssetDetail: React.FC = () => {
                 <span style={{ fontSize: '11px', color: '#B8B3A8', fontWeight: 700 }}>OPERATIONAL STATUS</span>
                 <div style={{ marginTop: '8px' }}>
                   <span style={{ backgroundColor: '#00D96622', color: '#00D966', border: '1px solid #00D966', padding: '4px 8px', borderRadius: '4px', fontWeight: 800, fontSize: '12px' }}>
-                    ACTIVE
+                    {d.asset.status.toUpperCase()}
                   </span>
                 </div>
               </div>
 
               <div style={{ backgroundColor: '#1A1D1F', border: '1px solid #2A2D30', borderRadius: '8px', padding: '16px' }}>
-                <span style={{ fontSize: '11px', color: '#B8B3A8', fontWeight: 700 }}>LAST ALERT</span>
+                <span style={{ fontSize: '11px', color: '#B8B3A8', fontWeight: 700 }}>LATEST FLAGGED PERIOD</span>
                 <div style={{ marginTop: '8px', fontSize: '16px', fontWeight: 800, color: '#FF9000' }}>
-                  2h ago
+                  {latestWindow ? latestWindow.period.slice(0, 7) : 'None'}
                 </div>
               </div>
             </div>
 
-            {/* c) Health Trend Chart */}
+            {/* c) Detector Validation Metrics (backend backtest) */}
             <div style={{ backgroundColor: '#1A1D1F', border: '1px solid #2A2D30', borderRadius: '8px', padding: '20px' }}>
-              <h3 style={{ fontSize: '15px', fontWeight: 700, color: '#F3EFE4', marginBottom: '12px' }}>Health Score Trend (6M)</h3>
-              <div style={{ width: '100%', height: '180px' }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={asset.healthTrend} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#2A2D30" />
-                    <XAxis dataKey="month" stroke="#B8B3A8" fontSize={10} tickLine={false} />
-                    <YAxis stroke="#B8B3A8" fontSize={10} domain={[50, 100]} tickLine={false} />
-                    <Area type="monotone" dataKey="score" stroke="#FF9000" fill="#FF9000" fillOpacity={0.2} strokeWidth={2} />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </div>
+              <h3 style={{ fontSize: '15px', fontWeight: 700, color: '#F3EFE4', marginBottom: '12px' }}>Detector Validation Metrics</h3>
+              {d.detector_metrics ? (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(90px, 1fr))', gap: '10px' }}>
+                  {Object.entries(d.detector_metrics).slice(0, 6).map(([k, v]) => (
+                    <div key={k} style={{ backgroundColor: '#111313', padding: '10px', borderRadius: '6px', textAlign: 'center' }}>
+                      <div style={{ fontSize: '16px', fontWeight: 800, color: '#C7F700' }}>{typeof v === 'number' ? v.toFixed(2) : String(v)}</div>
+                      <div style={{ fontSize: '9px', color: '#B8B3A8', textTransform: 'uppercase', marginTop: '2px' }}>{k.replace(/_/g, ' ')}</div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div style={{ fontSize: '12px', color: '#B8B3A8' }}>Detector metrics unavailable for this asset.</div>
+              )}
             </div>
           </div>
 
-          {/* d) Active Issues */}
+          {/* d) Active Issues (backend recommendations) */}
           <div style={{ backgroundColor: '#111313', border: '1px solid #2A2D30', borderRadius: '8px', padding: '20px' }}>
-            <h3 style={{ fontSize: '15px', fontWeight: 700, color: '#F3EFE4', marginBottom: '14px' }}>Active Issues & Anomalies</h3>
+            <h3 style={{ fontSize: '15px', fontWeight: 700, color: '#F3EFE4', marginBottom: '14px' }}>Active Issues & Recommended Actions</h3>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              <div
-                onClick={() => setActiveTab('ai')}
-                style={{ backgroundColor: '#1A1D1F', border: '1px solid #FF3B3B44', borderRadius: '6px', padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                  <span style={{ backgroundColor: '#FF3B3B22', color: '#FF3B3B', padding: '2px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: 800 }}>HIGH</span>
-                  <span style={{ fontWeight: 700, color: '#F3EFE4' }}>Production Deviation (-17.4% below target baseline)</span>
-                </div>
-                <ChevronRight size={16} color="#B8B3A8" />
-              </div>
-
-              <div
-                onClick={() => setActiveTab('ai')}
-                style={{ backgroundColor: '#1A1D1F', border: '1px solid #FF900044', borderRadius: '6px', padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                  <span style={{ backgroundColor: '#FF900022', color: '#FF9000', padding: '2px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: 800 }}>HIGH</span>
-                  <span style={{ fontWeight: 700, color: '#F3EFE4' }}>Pressure Drop Detected (PT-104 sensor variance -2.1 bar)</span>
-                </div>
-                <ChevronRight size={16} color="#B8B3A8" />
-              </div>
-
-              <div
-                onClick={() => setActiveTab('ai')}
-                style={{ backgroundColor: '#1A1D1F', border: '1px solid #2A2D30', borderRadius: '6px', padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                  <span style={{ backgroundColor: '#FFD70022', color: '#FFD700', padding: '2px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: 800 }}>MEDIUM</span>
-                  <span style={{ fontWeight: 700, color: '#F3EFE4' }}>Decline Rate Accelerating (2.3%/mo vs 1.8%/mo field average)</span>
-                </div>
-                <ChevronRight size={16} color="#B8B3A8" />
-              </div>
+              {d.recommendations.recommendations.map((rec, idx) => {
+                const color = rec.priority === 'CRITICAL' || rec.priority === 'HIGH' ? '#FF3B3B' : rec.priority === 'MEDIUM' ? '#FF9000' : '#FFD700';
+                return (
+                  <div
+                    key={rec.code + idx}
+                    onClick={() => setActiveTab('ai')}
+                    style={{ backgroundColor: '#1A1D1F', border: `1px solid ${color}44`, borderRadius: '6px', padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      <span style={{ backgroundColor: `${color}22`, color, padding: '2px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: 800 }}>{rec.priority}</span>
+                      <span style={{ fontWeight: 700, color: '#F3EFE4' }}>{rec.action} — <span style={{ fontWeight: 400, color: '#B8B3A8' }}>{rec.rationale}</span></span>
+                    </div>
+                    <ChevronRight size={16} color="#B8B3A8" />
+                  </div>
+                );
+              })}
+              {d.recommendations.recommendations.length === 0 && (
+                <div style={{ fontSize: '13px', color: '#00D966' }}>No recommended actions — asset performing within expected bounds.</div>
+              )}
             </div>
           </div>
 
@@ -589,56 +657,56 @@ export const AssetDetail: React.FC = () => {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(450px, 1fr))', gap: '24px' }}>
             
             <SHAPExplanationCard
-              asset_id={asset.id}
-              production_deviation_percent={asset.deviation}
-              top_features={asset.shapFactors.map(f => ({
-                feature_name: f.factor,
-                contribution_percent: f.pct,
-                value: f.pct,
-                baseline_value: 0,
+              asset_id={d.asset.id}
+              production_deviation_percent={d.deviation_pct}
+              top_features={d.attribution.contributions.map(c => ({
+                feature_name: c.label,
+                contribution_percent: c.relative_contribution_pct,
+                value: c.shap_value,
+                baseline_value: d.attribution.base_value,
               }))}
-              model_type="Isolation Forest"
-              model_confidence={0.87}
+              model_type={d.attribution.terminology}
+              model_confidence={d.aips.confidence_breakdown.model_confidence}
             />
 
-            {/* b) Recovery Opportunity Card (Estimated, with confidence breakdown) */}
+            {/* b) Recovery Opportunity Card (backend estimate, with confidence breakdown) */}
             <RecoveryOpportunityCard
-              asset_id={asset.id}
-              expected_production={asset.expectedProd}
-              actual_production={asset.currentProd}
-              historical_recovery_rate={0.80}
-              model_confidence={0.90}
-              combined_confidence={0.85}
-              anomaly_score={0.94}
+              asset_id={d.asset.id}
+              expected_production={d.expected_production_bbl_d}
+              actual_production={d.current_production_bbl_d}
+              historical_recovery_rate={d.recovery.historical_success_rate}
+              model_confidence={d.recovery.model_confidence}
+              combined_confidence={d.recovery.combined_confidence}
+              anomaly_score={d.anomaly_score}
             />
           </div>
 
-          {/* c) Corrected AIPS Breakdown (formula, components, confidence) */}
+          {/* c) Backend AIPS Breakdown (formula, components, confidence) */}
           <AIPSBreakdown
-            aips_score={aipsResult.aips_score}
-            priority={aipsResult.priority}
-            loss_magnitude={aipsResult.loss_magnitude}
-            anomaly_severity={aipsResult.anomaly_severity}
-            recovery_opportunity={aipsResult.recovery_opportunity}
-            intervention_complexity={aipsResult.intervention_complexity}
-            confidence={aipsResult.confidence}
+            aips_score={d.aips.score}
+            priority={d.aips.priority}
+            loss_magnitude={d.aips.breakdown.loss_magnitude_pct}
+            anomaly_severity={d.aips.breakdown.anomaly_severity / 100}
+            recovery_opportunity={d.aips.breakdown.recovery_opportunity_pct}
+            intervention_complexity={d.aips.breakdown.intervention_complexity}
+            confidence={d.aips.confidence_breakdown.combined_confidence}
           />
 
-          {/* d) Model Confidence Grid */}
+          {/* d) Model Confidence Grid (backend validation numbers) */}
           <div style={{ backgroundColor: '#111313', border: '1px solid #2A2D30', borderRadius: '8px', padding: '20px' }}>
             <h3 style={{ fontSize: '14px', fontWeight: 700, color: '#F3EFE4', marginBottom: '14px' }}>Model Confidence & Validation Scores</h3>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px' }}>
               <div style={{ backgroundColor: '#1A1D1F', padding: '14px', borderRadius: '6px' }}>
-                <div style={{ fontSize: '11px', color: '#B8B3A8' }}>Forecast Confidence</div>
-                <div style={{ fontSize: '20px', fontWeight: 800, color: '#C7F700', marginTop: '4px' }}>87%</div>
+                <div style={{ fontSize: '11px', color: '#B8B3A8' }}>Arps Fit R²</div>
+                <div style={{ fontSize: '20px', fontWeight: 800, color: '#C7F700', marginTop: '4px' }}>{d.decline.r_squared.toFixed(3)}</div>
               </div>
               <div style={{ backgroundColor: '#1A1D1F', padding: '14px', borderRadius: '6px' }}>
-                <div style={{ fontSize: '11px', color: '#B8B3A8' }}>Anomaly Detection Confidence</div>
-                <div style={{ fontSize: '20px', fontWeight: 800, color: '#C7F700', marginTop: '4px' }}>94%</div>
+                <div style={{ fontSize: '11px', color: '#B8B3A8' }}>Detector ROC-AUC</div>
+                <div style={{ fontSize: '20px', fontWeight: 800, color: '#C7F700', marginTop: '4px' }}>{d.detector_metrics?.roc_auc?.toFixed(2) ?? '---'}</div>
               </div>
               <div style={{ backgroundColor: '#1A1D1F', padding: '14px', borderRadius: '6px' }}>
-                <div style={{ fontSize: '11px', color: '#B8B3A8' }}>Attribution Confidence</div>
-                <div style={{ fontSize: '20px', fontWeight: 800, color: '#C7F700', marginTop: '4px' }}>82%</div>
+                <div style={{ fontSize: '11px', color: '#B8B3A8' }}>Combined Recovery Confidence</div>
+                <div style={{ fontSize: '20px', fontWeight: 800, color: '#C7F700', marginTop: '4px' }}>{(d.recovery.combined_confidence * 100).toFixed(0)}%</div>
               </div>
             </div>
           </div>
@@ -653,11 +721,15 @@ export const AssetDetail: React.FC = () => {
         </h3>
 
         <div style={{ position: 'relative', paddingLeft: '24px', borderLeft: '2px solid #2A2D30', display: 'flex', flexDirection: 'column', gap: '20px' }}>
-          {[
-            { date: '2026-08-15', title: 'Anomaly Detected', description: 'Production deviation of -17.4% detected', color: '#FF3B3B' },
-            { date: '2026-08-10', title: 'Pressure Alert', description: 'Pressure sensor PT-104 reading below threshold', color: '#FF9000' },
-            { date: '2026-08-05', title: 'Routine Maintenance', description: 'Scheduled maintenance completed successfully', color: '#00D966' },
-          ].map((ev: { date: string; title: string; description: string; color: string }, idx: number) => (
+          {(d.anomaly_windows.length > 0
+            ? d.anomaly_windows.slice(-3).reverse().map((w) => ({
+                period: w.period.slice(0, 10),
+                title: `${w.severity} anomaly window`,
+                description: w.explanation,
+                color: w.severity === 'CRITICAL' ? '#FF3B3B' : w.severity === 'ALERT' ? '#FF9000' : '#FFD700',
+              }))
+            : [{ period: d.analyzed_at.slice(0, 10), title: 'No anomalies flagged', description: 'All monitored windows within expected bands.', color: '#00D966' }]
+          ).map((ev: { period: string; title: string; description: string; color: string }, idx: number) => (
             <div key={idx} style={{ position: 'relative' }}>
               {/* Timeline Marker Dot */}
               <div style={{
@@ -672,7 +744,7 @@ export const AssetDetail: React.FC = () => {
               }}></div>
 
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <span style={{ fontSize: '11px', fontWeight: 800, color: '#B8B3A8', fontFamily: 'monospace' }}>{ev.date}</span>
+                <span style={{ fontSize: '11px', fontWeight: 800, color: '#B8B3A8', fontFamily: 'monospace' }}>{ev.period}</span>
                 <span style={{
                   backgroundColor: `${ev.color}22`,
                   color: ev.color,
@@ -682,9 +754,8 @@ export const AssetDetail: React.FC = () => {
                   padding: '2px 6px',
                   borderRadius: '4px'
                 }}>
-                  {ev.date}
+                  {ev.title}
                 </span>
-                <span style={{ fontSize: '13px', fontWeight: 600, color: '#F3EFE4' }}>{ev.title}</span>
               </div>
               <div style={{ fontSize: '12px', color: '#B8B3A8', marginTop: '4px' }}>{ev.description}</div>
             </div>
@@ -707,7 +778,7 @@ export const AssetDetail: React.FC = () => {
         zIndex: 100
       }}>
         <div style={{ fontSize: '13px', color: '#B8B3A8' }}>
-          Asset <strong style={{ color: '#F3EFE4' }}>{asset.id}</strong> Intervention Workflow
+          Asset <strong style={{ color: '#F3EFE4' }}>{d.asset.id}</strong> Intervention Workflow
         </div>
 
         <div style={{ display: 'flex', gap: '12px' }}>
@@ -796,8 +867,8 @@ export const AssetDetail: React.FC = () => {
             </div>
             <p style={{ fontSize: '13px', color: '#B8B3A8', margin: '14px 0' }}>
               {modalAction === 'investigate'
-                ? `Dispatch telemetry diagnostic task force for asset ${displayAsset.id} (Pressure sensor PT-104 inspection).`
-                : (modalAction === 'simulate' ? `Initiate reservoir gas-lift simulation model targeting +0.18 MMBL recovery.` : `Asset ${displayAsset.id} will be pinned to high-priority alert stream.`)}
+              ? `Dispatch telemetry diagnostic task force for asset ${d.asset.id} (Pressure sensor PT-104 inspection).`
+              : (modalAction === 'simulate' ? `Initiate reservoir gas-lift simulation model targeting +${d.recovery.estimated_recovery_mmbbl.toFixed(2)} MMbbl estimated recovery.` : `Asset ${d.asset.id} will be pinned to high-priority alert stream.`)}
             </p>
             <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
               <button

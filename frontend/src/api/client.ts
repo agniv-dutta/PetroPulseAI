@@ -255,11 +255,24 @@ export const api = {
       }>
     }>('/provenance/sources'),
 
-  startSimulation: (assetId: string, scenario: string) =>
+  startSimulation: (assetId: string, scenario: string, opts?: { speed_multiplier?: number }) =>
     send<{ session_id: string; asset_id: string; scenario: string }>(
       '/simulation/sessions',
       'POST',
-      { asset_id: assetId, scenario },
+      { asset_id: assetId, scenario, ...(opts ?? {}) },
+    ),
+
+  pauseSimulation: (sessionId: string) =>
+    send<{ session_id: string }>(`/simulation/${encodeURIComponent(sessionId)}/pause`, 'POST'),
+
+  resumeSimulation: (sessionId: string) =>
+    send<{ session_id: string }>(`/simulation/${encodeURIComponent(sessionId)}/resume`, 'POST'),
+
+  injectAnomaly: (sessionId: string, scenario: string) =>
+    send<{ status: string }>(
+      `/simulation/${encodeURIComponent(sessionId)}/inject-anomaly`,
+      'POST',
+      { scenario },
     ),
 
   stopSimulation: (sessionId: string) =>

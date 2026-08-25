@@ -9,13 +9,10 @@ import {
   X,
   AlertOctagon,
   Sliders,
-  Loader2,
-  RefreshCw
+  Loader2
 } from 'lucide-react';
-import { calculateAIPS } from '../utils/aipsCalculator';
 import type { AIPSPriority, AssetSeverity } from '../types';
 import { aipsApi } from '../api/aips';
-import { assetsApi } from '../api/assets';
 
 export interface AssetItem {
   rank: number;
@@ -32,130 +29,14 @@ export interface AssetItem {
   priority: AIPSPriority;
 }
 
-// Helper to generate 128 assets
-const generate128Assets = (): AssetItem[] => {
-  const basins = [
-    { name: 'Mumbai Offshore', fields: ['Mumbai High North', 'Heera Field', 'Neelam Field', 'Bassein Complex'] },
-    { name: 'Cauvery Basin', fields: ['Cauvery Offshore', 'Nagapattinam', 'Karaikal', 'Palk Bay'] },
-    { name: 'KG Basin', fields: ['Krishna Godavari Deepwater', 'Ravva Platform Alpha', 'Dhirubhai Block', 'Gautami'] },
-    { name: 'Assam Shelf', fields: ['Digboi Field', 'Rudrasagar', 'Geleki', 'Lakwa'] },
-    { name: 'Cambay Basin', fields: ['Ankleshwar Sector 4', 'Gandhar Field', 'Hazira Offshore', 'Kalol'] },
-    { name: 'Rajasthan Basin', fields: ['Mangala Field', 'Bhagyam', 'Aishwariya', 'Barmer Block'] },
-  ];
-
-  interface AssetSeed {
-    id: string;
-    field: string;
-    basin: string;
-    currentProd: number;
-    expectedProd: number;
-    deviation: number;
-    declineRate: number;
-    recoveryPotential: number;
-    anomalyScore: number;
-    histRate: number;
-    complexity: number;
-  }
-
-  const scoreAsset = (seed: AssetSeed): { aipsScore: number; priority: AssetItem['priority']; severity: AssetItem['severity'] } => {
-    const result = calculateAIPS({
-      asset_id: seed.id,
-      expected_production: seed.expectedProd,
-      actual_production: seed.currentProd,
-      anomaly_score: seed.anomalyScore,
-      historical_recovery_rate: seed.histRate,
-      intervention_complexity: seed.complexity,
-    });
-    const aipsScore = Math.round(result.aips_score);
-    const severity: AssetItem['severity'] = aipsScore >= 80 ? 'CRITICAL' : aipsScore >= 60 ? 'HIGH' : aipsScore >= 40 ? 'WATCH' : 'NORMAL';
-    return { aipsScore, priority: result.priority, severity };
-  };
-
-  const seedData: AssetSeed[] = [
-    { id: 'MH-07', field: 'Mumbai High North', basin: 'Mumbai Offshore', currentProd: 1.17, expectedProd: 1.42, deviation: -17.4, declineRate: 2.3, recoveryPotential: 1.24, anomalyScore: 0.94, histRate: 0.80, complexity: 0.60 },
-    { id: 'CB-12', field: 'Cauvery Offshore', basin: 'Cauvery Basin', currentProd: 0.89, expectedProd: 1.05, deviation: -15.2, declineRate: 1.8, recoveryPotential: 0.87, anomalyScore: 0.85, histRate: 0.80, complexity: 0.50 },
-    { id: 'KG-102a', field: 'Ravva Platform Alpha', basin: 'KG Basin', currentProd: 8.15, expectedProd: 9.20, deviation: -11.4, declineRate: 1.5, recoveryPotential: 0.95, anomalyScore: 0.80, histRate: 0.80, complexity: 0.55 },
-    { id: 'AS-09', field: 'Digboi Field', basin: 'Assam Shelf', currentProd: 0.42, expectedProd: 0.51, deviation: -17.6, declineRate: 2.7, recoveryPotential: 0.45, anomalyScore: 0.90, histRate: 0.85, complexity: 0.65 },
-    { id: 'CB-991', field: 'Ankleshwar Sector 4', basin: 'Cambay Basin', currentProd: 4.20, expectedProd: 4.35, deviation: -3.4, declineRate: 0.9, recoveryPotential: 0.32, anomalyScore: 0.55, histRate: 0.75, complexity: 0.30 },
-    { id: 'RJ-004', field: 'Mangala Field', basin: 'Rajasthan Basin', currentProd: 22.10, expectedProd: 22.00, deviation: 0.4, declineRate: 0.5, recoveryPotential: 0.15, anomalyScore: 0.20, histRate: 0.70, complexity: 0.20 },
-  ];
-
-  const assets: AssetItem[] = seedData.map((seed, idx) => {
-    const { aipsScore, priority, severity } = scoreAsset(seed);
-    return {
-      rank: idx + 1,
-      id: seed.id,
-      field: seed.field,
-      basin: seed.basin,
-      currentProd: seed.currentProd,
-      expectedProd: seed.expectedProd,
-      deviation: seed.deviation,
-      declineRate: seed.declineRate,
-      severity,
-      recoveryPotential: seed.recoveryPotential,
-      aipsScore,
-      priority,
-    };
-  });
-
-  const prefixList = ['MH', 'CB', 'KG', 'AS', 'CAM', 'RJ', 'WB', 'KUT'];
-
-  for (let i = 7; i <= 128; i++) {
-    const basinObj = basins[i % basins.length];
-    const fieldName = basinObj.fields[i % basinObj.fields.length];
-    const pfix = prefixList[i % prefixList.length];
-    const id = `${pfix}-${(i * 13) % 900 + 100}`;
-    
-    // Generate realistic variance
-    const expected = parseFloat((Math.random() * 5 + 0.5).toFixed(2));
-    const devPct = parseFloat((Math.random() * 50 - 35).toFixed(1)); // mostly negative
-    const current = parseFloat((expected * (1 + devPct / 100)).toFixed(2));
-    const decRate = parseFloat((Math.random() * 3 + 0.3).toFixed(1));
-    const recovery = parseFloat((Math.random() * 1.5 + 0.1).toFixed(2));
-
-    // Derive AIPS inputs from generated asset characteristics
-    const anomalyScore = Math.min(0.95, Math.max(0.05, Math.abs(devPct) / 40 + Math.random() * 0.10));
-    const histRate = parseFloat((0.70 + Math.random() * 0.20).toFixed(2));
-    const complexity = Math.min(1, Math.max(0.05, decRate / 4 + Math.random() * 0.10));
-
-    const { aipsScore, priority, severity } = scoreAsset({
-      id,
-      field: fieldName,
-      basin: basinObj.name,
-      currentProd: current,
-      expectedProd: expected,
-      deviation: devPct,
-      declineRate: decRate,
-      recoveryPotential: recovery,
-      anomalyScore,
-      histRate,
-      complexity,
-    });
-
-    assets.push({
-      rank: i,
-      id,
-      field: fieldName,
-      basin: basinObj.name,
-      currentProd: current,
-      expectedProd: expected,
-      deviation: devPct,
-      declineRate: decRate,
-      severity,
-      recoveryPotential: recovery,
-      aipsScore,
-      priority
-    });
-  }
-
-  // Pre-sort by AIPS Score descending
-  return assets.sort((a, b) => b.aipsScore - a.aipsScore).map((item, idx) => ({ ...item, rank: idx + 1 }));
-};
+// Backend-first leaderboard; tiny labelled fallback when the API is unreachable
+const FALLBACK_ASSETS: AssetItem[] = [
+  { rank: 1, id: 'MH-07', field: 'Mumbai High North', basin: 'Mumbai Offshore', currentProd: 0, expectedProd: 0, deviation: 0, declineRate: 0, severity: 'CRITICAL' as AssetSeverity, recoveryPotential: 0, aipsScore: 0, priority: 'HIGH' as AIPSPriority },
+];
 
 export const AssetLeaderboard: React.FC = () => {
   const navigate = useNavigate();
-  const fallbackData = useMemo(() => generate128Assets(), []);
-  const [rawData, setRawData] = useState<AssetItem[]>(fallbackData);
+  const [rawData, setRawData] = useState<AssetItem[]>(FALLBACK_ASSETS);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -163,34 +44,29 @@ export const AssetLeaderboard: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
+      // Backend /aips/ranking is the single source of truth for the board
       const ranking = await aipsApi.getRanking(100);
-      const assets = await assetsApi.list({ limit: 1000 });
 
-      // Combine ranking data with asset details
-      const combinedData = ranking.map((r) => {
-        const asset = assets.find(a => a.id === r.asset_id);
-        const baselineQi = asset?.baseline_qi ?? 0;
-        const baselineDi = asset?.baseline_di ?? 0;
-        return {
-          rank: r.rank,
-          id: r.asset_id,
-          field: r.field,
-          basin: r.basin,
-          currentProd: baselineQi,
-          expectedProd: baselineQi * 1.1,
-          deviation: -(baselineQi * 0.1),
-          declineRate: baselineDi,
-          severity: (r.priority === 'CRITICAL' ? 'CRITICAL' : r.priority === 'HIGH' ? 'HIGH' : r.priority === 'MEDIUM' ? 'WATCH' : 'NORMAL') as AssetSeverity,
-          recoveryPotential: r.aips_score * 100,
-          aipsScore: r.aips_score * 100,
-          priority: r.priority as AIPSPriority,
-        };
-      });
+      const combinedData: AssetItem[] = (ranking?.rows ?? []).map((r) => ({
+        rank: r.rank,
+        id: r.assetId,
+        field: r.field ?? '',
+        basin: r.basin ?? '',
+        currentProd: r.currentProdBblD ?? 0,
+        expectedProd: r.expectedProdBblD ?? 0,
+        deviation: r.deviationPct ?? 0,
+        declineRate: r.declineRatePctPerMonth ?? 0,
+        severity: (r.priority === 'CRITICAL' ? 'CRITICAL' : r.priority === 'HIGH' ? 'HIGH' : r.priority === 'MEDIUM' ? 'WATCH' : 'NORMAL') as AssetSeverity,
+        recoveryPotential: r.recoveryOpportunityPct ?? 0,
+        aipsScore: Math.round(r.aipsScore),
+        priority: r.priority as AIPSPriority,
+      }));
 
+      if (combinedData.length === 0) throw new Error('Backend returned an empty leaderboard.');
       setRawData(combinedData);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load leaderboard data');
-      // Keep fallback data on error
+      // Keep labelled fallback data on error
     } finally {
       setLoading(false);
     }

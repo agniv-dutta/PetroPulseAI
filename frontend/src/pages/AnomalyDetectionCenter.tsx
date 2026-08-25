@@ -23,8 +23,6 @@ import {
 } from 'lucide-react';
 import { DataTransparencyBanner } from '../components/DataTransparencyBanner';
 import { anomalyApi } from '../api/anomaly';
-import { assetsApi } from '../api/assets';
-import type { AnomalyResponse, AssetResponse } from '../api/types';
 
 export interface AnomalyItem {
   id: string;
@@ -229,55 +227,51 @@ export const AnomalyDetectionCenter: React.FC = () => {
   const [selectedAssetId, setSelectedAssetId] = useState<string>('AD-8842');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [assets, setAssets] = useState<AssetResponse[]>([]);
 
-  // Load anomalies and assets on mount
+  // Load anomalies on mount (backend /anomaly/active is the source of truth)
   const loadAnomalies = async () => {
     setLoading(true);
     setError(null);
     try {
-      const [anomalies, assetData] = await Promise.all([
-        anomalyApi.getActive(100),
-        assetsApi.list({ limit: 1000 }),
-      ]);
-      setAssets(assetData);
+      const result = await anomalyApi.getActive(100);
+      const rows = result?.rows ?? [];
 
       // Convert API anomalies to AnomalyItem format
-      const convertedAnomalies: AnomalyItem[] = anomalies.map((a) => {
-        const asset = assetData.find(asset => asset.id === a.asset_id);
+      const convertedAnomalies: AnomalyItem[] = rows.map((a, idx) => {
+        const detectedAt = a.detectedAt ?? new Date().toISOString();
         return {
-          id: a.id,
-          assetId: a.asset_id,
-          field: asset?.field || 'Unknown',
-          basin: asset?.basin || 'Unknown',
+          id: `${a.assetId}-${idx}`,
+          assetId: a.assetId,
+          field: a.field || 'Unknown',
+          basin: a.basin || 'Unknown',
           severity: a.severity as 'CRITICAL' | 'HIGH' | 'WATCH' | 'NORMAL',
-          status: a.status === 'ACTIVE' ? 'UNACKNOWLEDGED' : a.status as 'UNACKNOWLEDGED' | 'INVESTIGATING' | 'ACKNOWLEDGED' | 'MONITORING' | 'RESOLVED',
-          deviation: a.deviation_pct,
-          absDeviation: `${a.deviation_pct > 0 ? '+' : ''}${Math.round(a.deviation_pct)}%`,
-          expected: a.expected_bbl_d,
-          actual: a.actual_bbl_d,
-          aiScore: Math.round(a.anomaly_score * 100),
+          status: 'UNACKNOWLEDGED' as const,
+          deviation: a.deviationPct,
+          absDeviation: `${a.deviationPct > 0 ? '+' : ''}${Math.round(a.deviationPct)}%`,
+          expected: a.expectedBblD ?? 0,
+          actual: a.actualBblD ?? 0,
+          aiScore: Math.round(a.anomalyScore * 100),
           detectionMethod: 'AI Model',
-          detectedAt: a.detected_at,
+          detectedAt,
           detectedRelative: 'T-00:00:00',
           duration: 'Active',
-          description: `Anomaly detected with ${a.contributing_features.length} contributing features`,
-          rootCauses: a.contributing_features.slice(0, 2).map(f => ({
-            title: f.feature,
-            desc: `Feature importance: ${f.importance.toFixed(2)}`,
-            impact: `${Math.round(f.importance * 100)}%`
+          description: `Anomaly detected with ${a.contributingFeatures.length} contributing features`,
+          rootCauses: a.contributingFeatures.slice(0, 2).map(f => ({
+            title: f.label ?? String(f.feature ?? 'Feature'),
+            desc: `Model importance: ${Number(f.importance).toFixed(2)}`,
+            impact: `${Math.round(Number(f.importance) * 100)}%`
           })),
           recoveryPotential: 'TBD',
           recommendedAction: 'Investigate contributing features',
           historyChart: [
-            { time: 'T-30', actual: a.expected_bbl_d, expected: a.expected_bbl_d },
-            { time: 'NOW', actual: a.actual_bbl_d, expected: a.expected_bbl_d },
+            { time: 'T-30', actual: a.expectedBblD ?? 0, expected: a.expectedBblD ?? 0 },
+            { time: 'NOW', actual: a.actualBblD ?? 0, expected: a.expectedBblD ?? 0 },
           ],
           timeline: [
-            { time: 'NOW', text: a.status === 'ACTIVE' ? 'Awaiting acknowledgment' : a.status, active: true },
+            { time: 'NOW', text: 'Awaiting acknowledgment', active: true },
           ],
           correlatedAssets: [
-            { id: a.asset_id, x: 50, y: 50, active: true }
+            { id: a.assetId, x: 50, y: 50, active: true }
           ]
         };
       });

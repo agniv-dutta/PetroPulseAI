@@ -1,82 +1,100 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { generateTelemetryBase, mockAssets } from '../data/mockData';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
-  Play,
-  Pause,
-  RotateCcw,
   Activity,
-  Loader2,
   AlertTriangle,
-  RefreshCw
+  Zap,
+  Loader2,
+  Pause,
+  Play,
+  RotateCcw
 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip } from 'recharts';
 import { DataTransparencyBanner } from '../components/DataTransparencyBanner';
-import { simulationApi, SimulationWebSocket } from '../api/simulation';
-import { assetsApi } from '../api/assets';
-import type { SimulationTelemetry, SimulationEvent, SimulationResponse } from '../api/types';
+import { useApiData, useSimulationSocket } from '../api/hooks';
+import { api, type LeaderboardRow } from '../api/client';
+import { mockAssets } from '../data/mockData';
+
+interface StreamRow {
+  timestamp: string;
+  assetId: string;
+  production: number;
+  forecast: number;
+  anomalyScore: number;
+  status: 'NORMAL' | 'WATCH' | 'ALERT' | 'CRITICAL';
+}
 
 export const SimulationCenter: React.FC = () => {
-  const [isPlaying, setIsPlaying] = useState<boolean>(false);
-  const [speed, setSpeed] = useState<number>(1); // 1x, 5x, 10x
   const [selectedAsset, setSelectedAsset] = useState<string>('MH-07');
-  const [simulationId, setSimulationId] = useState<string | null>(null);
-  const [simulation, setSimulation] = useState<SimulationResponse | null>(null);
+  const [speed, setSpeed] = useState<number>(10);
+  const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-  const [assets, setAssets] = useState<Array<{ id: string; name: string }>>(mockAssets);
-
-  // We populate initial data (e.g. 15 points) to start with
-  const [stream, setStream] = useState(() => generateTelemetryBase(15));
   const [flashAlert, setFlashAlert] = useState<boolean>(false);
-  const streamTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const wsRef = useRef<SimulationWebSocket | null>(null);
 
-  // Load assets on mount
+  // Backend-backed simulation session (REST + WebSocket)
+  const sim = useSimulationSocket(selectedAsset);
+
+  // Asset universe comes from the backend leaderboard (mock fallback offline)
+  const leaderboard = useApiData<{ rows: LeaderboardRow[]; count: number }>(
+    () => api.leaderboard(),
+    { rows: [], count: 0 },
+  );
+  const assets = useMemo(() => {
+    const rows = leaderboard.data.rows ?? [];
+    if (rows.length === 0) {
+      return mockAssets.map((a) => ({ id: a.id, field: a.field }));
+    }
+    return rows.map((r) => ({ id: r.id, field: r.field }));
+  }, [leaderboard.data]);
+
   useEffect(() => {
-    const loadAssets = async () => {
-      try {
-        const assetData = await assetsApi.list({ limit: 100 });
-        setAssets(assetData.map(a => ({ id: a.id, name: a.name })));
-      } catch (err) {
-        console.error('Failed to load assets:', err);
-      }
-    };
-    loadAssets();
-  }, []);
+    if (assets.length > 0 && !assets.some((a) => a.id === selectedAsset)) {
+      setSelectedAsset(assets[0].id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assets]);
 
-  // Start simulation
+  // Chart/table rows are derived strictly from backend telemetry frames
+  const stream = useMemo<StreamRow[]>(
+    () =>
+      sim.ticks.slice(-25).map((t) => ({
+        timestamp: new Date(t.timestamp).toLocaleTimeString([], {
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+        }),
+        assetId: t.asset_id,
+        production: Math.round(t.production_bbl_d),
+        forecast: Math.round(t.expected_bbl_d),
+        anomalyScore: parseFloat(t.anomaly_score.toFixed(2)),
+        status: t.severity,
+      })),
+    [sim.ticks],
+  );
+
+  const latestDataPoint = stream[stream.length - 1];
+
+  // Visual flash when the BACKEND model flags an alert/critical observation
+  const tickCount = sim.ticks.length;
+  const lastSeverity = tickCount > 0 ? sim.ticks[tickCount - 1].severity : null;
+  useEffect(() => {
+    if (lastSeverity === 'CRITICAL' || lastSeverity === 'ALERT') {
+      setFlashAlert(true);
+      const timer = setTimeout(() => setFlashAlert(false), 500);
+      return () => clearTimeout(timer);
+    }
+  }, [tickCount]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Start simulation (backend session + WebSocket stream)
   const startSimulation = async () => {
     setLoading(true);
     setError(null);
     try {
-      const simResponse = await simulationApi.start({ asset_id: selectedAsset, scenario: 'baseline' });
-      setSimulationId(simResponse.simulation_id);
-      setSimulation(simResponse);
-
-      // Connect WebSocket
-      const ws = new SimulationWebSocket(simResponse.simulation_id);
-      wsRef.current = ws;
-
-      await ws.connect();
-
-      // Subscribe to telemetry
-      ws.on('telemetry', (data: SimulationTelemetry) => {
-        appendTick({
-          timestamp: data.timestamp,
-          asset_id: data.asset_id,
-          production_bbl_d: data.production,
-          expected_bbl_d: data.forecast,
-          anomaly_score: data.anomaly_score,
-          severity: data.severity,
-        });
-      });
-
-      // Subscribe to events
-      ws.on('anomaly_injected', (data: SimulationEvent) => {
-        setFlashAlert(true);
-        setTimeout(() => setFlashAlert(false), 500);
-      });
-
+      const started = await sim.start('NORMAL', { speed_multiplier: speed });
+      if (!started) {
+        setError('Backend unavailable — simulation requires the API server.');
+        return;
+      }
       setIsPlaying(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to start simulation');
@@ -85,155 +103,37 @@ export const SimulationCenter: React.FC = () => {
     }
   };
 
-  // Stop simulation
-  const stopSimulation = async () => {
-    if (simulationId) {
-      try {
-        await simulationApi.stop(simulationId);
-      } catch (err) {
-        console.error('Failed to stop simulation:', err);
-      }
-    }
-
-    // Disconnect WebSocket
-    if (wsRef.current) {
-      wsRef.current.disconnect();
-      wsRef.current = null;
-    }
-
-    setSimulationId(null);
-    setSimulation(null);
-    setIsPlaying(false);
-  };
-
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      if (wsRef.current) {
-        wsRef.current.disconnect();
-      }
-    };
-  }, []);
-
-  // Audio or visual flash handler for critical states
-  const latestDataPoint = stream[stream.length - 1];
-
-  const appendTick = (t: {
-    timestamp: string;
-    asset_id: string;
-    production_bbl_d: number;
-    expected_bbl_d: number;
-    anomaly_score: number;
-    severity: string;
-  }) => {
-    if (t.severity === 'CRITICAL' || t.anomaly_score > 0.85) {
-      setFlashAlert(true);
-      setTimeout(() => setFlashAlert(false), 500);
-    }
-    setStream((prevStream) => {
-      const updated = [
-        ...prevStream,
-        {
-          timestamp: new Date(t.timestamp).toLocaleTimeString([], {
-            hour: '2-digit', minute: '2-digit', second: '2-digit',
-          }),
-          assetId: t.asset_id,
-          production: Math.round(t.production_bbl_d),
-          forecast: Math.round(t.expected_bbl_d),
-          anomalyScore: parseFloat(t.anomaly_score.toFixed(2)),
-          status: t.severity as 'NORMAL' | 'CRITICAL' | 'ALERT' | 'WATCH',
-        },
-      ];
-      if (updated.length > 25) updated.shift();
-      return updated;
-    });
-  };
-
-  useEffect(() => {
-    if (isPlaying) {
-      const intervalMs = Math.max(100, 1000 / speed);
-      
-      streamTimerRef.current = setInterval(() => {
-        setStream((prevStream) => {
-          const baseVal = 12500;
-          const nextIndex = prevStream.length;
-          
-          // Generate new single observation
-          const time = new Date();
-          const timeString = time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-          
-          // Inject failing trend sometimes or just standard variation
-          // After 25 points, inject a valve failure anomaly for the demo
-          let production = 12500;
-          let anomalyScore = 0.05 + Math.random() * 0.1;
-          
-          if (nextIndex > 22 && nextIndex < 35) {
-            // valve failure simulation
-            production = Math.round(6200 + (Math.random() - 0.5) * 180);
-            anomalyScore = 0.96 + Math.random() * 0.03;
-          } else {
-            production = Math.round(baseVal + (Math.sin(nextIndex / 5) * 200) + (Math.random() - 0.5) * 100);
-          }
-
-          const forecast = Math.round(baseVal + (Math.sin(nextIndex / 5) * 80));
-          let status: 'NORMAL' | 'CRITICAL' = 'NORMAL';
-          if (anomalyScore > 0.85) {
-            status = 'CRITICAL';
-            // Trigger visual flash
-            setFlashAlert(true);
-            setTimeout(() => setFlashAlert(false), 500);
-          }
-
-          const newRow = {
-            timestamp: timeString,
-            assetId: selectedAsset,
-            production,
-            forecast,
-            anomalyScore: parseFloat(anomalyScore.toFixed(2)),
-            status
-          };
-
-          // Limit stream history to 30 points to prevent overload
-          const updated = [...prevStream, newRow];
-          if (updated.length > 25) {
-            updated.shift();
-          }
-          return updated;
-        });
-      }, intervalMs);
-    } else {
-      if (streamTimerRef.current) {
-        clearInterval(streamTimerRef.current);
-      }
-    }
-
-    return () => {
-      if (streamTimerRef.current) {
-        clearInterval(streamTimerRef.current);
-      }
-    };
-  }, [isPlaying, speed, selectedAsset]);
-
   const handlePlay = async () => {
     if (isPlaying) return;
-    await startSimulation();
+    if (sim.sessionId) {
+      await sim.resume();
+      setIsPlaying(true);
+    } else {
+      await startSimulation();
+    }
   };
 
   const handlePause = async () => {
-    if (simulationId) {
-      try {
-        await simulationApi.pause(simulationId);
-      } catch (err) {
-        console.error('Failed to pause simulation:', err);
-      }
-    }
+    await sim.pause();
     setIsPlaying(false);
   };
 
   const handleReset = async () => {
-    await stopSimulation();
-    setStream(generateTelemetryBase(15));
-    setFlashAlert(false);
+    setIsPlaying(false);
+    if (sim.sessionId) {
+      try {
+        await api.stopSimulation(sim.sessionId);
+      } catch (err) {
+        console.error('Failed to stop simulation:', err);
+      }
+    }
+  };
+
+  const handleInject = async () => {
+    const ok = await sim.inject('GRADUAL_CLOG');
+    if (!ok) {
+      setError('Could not inject anomaly — no active backend session.');
+    }
   };
 
   const getDevPct = () => {
@@ -319,8 +219,8 @@ export const SimulationCenter: React.FC = () => {
 
       {/* Controls Bar */}
       <div className="bg-dark-surface border border-dark-border rounded p-4 flex flex-col sm:flex-row gap-4 items-center justify-between">
-        
-        {/* Play / Pause / Reset */}
+
+        {/* Play / Pause / Reset / Inject */}
         <div className="flex items-center gap-2">
           {isPlaying ? (
             <button
@@ -342,18 +242,28 @@ export const SimulationCenter: React.FC = () => {
             </button>
           )}
 
-          <button 
+          <button
             onClick={handleReset}
             className="p-3 bg-dark-bg hover:bg-dark-elevated border border-dark-border text-text-secondary hover:text-text-primary rounded transition"
-            title="Reset Stream"
-            aria-label="Reset simulation stream"
+            title="Stop Session"
+            aria-label="Stop simulation session"
           >
             <RotateCcw size={16} />
           </button>
 
+          <button
+            onClick={handleInject}
+            disabled={!sim.sessionId || !isPlaying}
+            className="p-3 bg-dark-bg hover:bg-dark-elevated border border-accent-red border-opacity-50 text-accent-red rounded transition disabled:opacity-40 disabled:cursor-not-allowed"
+            title="Inject GRADUAL_CLOG anomaly into live stream"
+            aria-label="Inject anomaly"
+          >
+            <Zap size={16} />
+          </button>
+
           <span className="text-xs font-mono text-text-secondary uppercase ml-2">
             Status: {isPlaying ? <span className="text-accent-green font-bold">STREAMING</span> : 'PAUSED'}
-            {backendStreaming && <span className="ml-2 text-[10px] text-accent-lime">[BACKEND WS]</span>}
+            {sim.connected && <span className="ml-2 text-[10px] text-accent-lime">[BACKEND WS]</span>}
           </span>
         </div>
 
@@ -368,8 +278,8 @@ export const SimulationCenter: React.FC = () => {
                 aria-label={`Set playback speed to ${s}x`}
                 aria-pressed={speed === s}
                 className={`px-3 py-1 text-xs font-mono font-bold rounded transition ${
-                  speed === s 
-                    ? 'bg-dark-elevated text-accent-amber' 
+                  speed === s
+                    ? 'bg-dark-elevated text-accent-amber'
                     : 'text-text-secondary hover:text-text-primary'
                 }`}
               >
@@ -388,7 +298,7 @@ export const SimulationCenter: React.FC = () => {
             aria-label="Select telemetry target asset"
             className="bg-dark-bg border border-dark-border text-xs text-text-primary px-3 py-1.5 rounded outline-none font-mono focus:border-accent-amber cursor-pointer"
           >
-            {mockAssets.map(a => (
+            {assets.map(a => (
               <option key={a.id} value={a.id}>{a.id} ({a.field})</option>
             ))}
           </select>
@@ -403,7 +313,9 @@ export const SimulationCenter: React.FC = () => {
           <div className="text-2xl font-bold font-mono text-text-primary mt-1">
             {latestDataPoint ? latestDataPoint.production.toLocaleString() : '---'} <span className="text-xs">BBL/D</span>
           </div>
-          <span className="text-[10px] text-text-secondary font-mono mt-1 uppercase">Sensor frequency 10s</span>
+          <span className="text-[10px] text-text-secondary font-mono mt-1 uppercase">
+            {sim.scenario} scenario · SYNTHETIC feed
+          </span>
         </div>
 
         <div className="p-4 bg-dark-surface border border-dark-border rounded flex flex-col justify-between">
@@ -411,7 +323,7 @@ export const SimulationCenter: React.FC = () => {
           <div className="text-2xl font-bold font-mono text-text-primary mt-1">
             {latestDataPoint ? latestDataPoint.forecast.toLocaleString() : '---'} <span className="text-xs">BBL/D</span>
           </div>
-          <span className="text-[10px] text-text-secondary font-mono mt-1 uppercase">XGBoost continuous sync</span>
+          <span className="text-[10px] text-text-secondary font-mono mt-1 uppercase">ARPS baseline per tick</span>
         </div>
 
         <div className="p-4 bg-dark-surface border border-dark-border rounded flex flex-col justify-between">
@@ -444,28 +356,28 @@ export const SimulationCenter: React.FC = () => {
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={stream}>
               <XAxis dataKey="timestamp" stroke="#B8B3A8" fontSize={9} tickLine={false} />
-              <YAxis stroke="#B8B3A8" fontSize={9} tickLine={false} domain={[5000, 14000]} />
-              <Tooltip 
+              <YAxis stroke="#B8B3A8" fontSize={9} tickLine={false} domain={['auto', 'auto']} />
+              <Tooltip
                 contentStyle={{ backgroundColor: '#1A1D1F', borderColor: '#2A2D30' }}
                 labelStyle={{ color: '#F3EFE4' }}
               />
-              <Line 
-                type="monotone" 
-                name="Actual Flow" 
-                dataKey="production" 
-                stroke="#FF9000" 
-                strokeWidth={2} 
+              <Line
+                type="monotone"
+                name="Actual Flow"
+                dataKey="production"
+                stroke="#FF9000"
+                strokeWidth={2}
                 dot={false}
-                activeDot={{ r: 4 }} 
+                activeDot={{ r: 4 }}
               />
-              <Line 
-                type="monotone" 
-                name="Forecast" 
-                dataKey="forecast" 
-                stroke="#B8B3A8" 
-                strokeWidth={1.5} 
-                strokeDasharray="3 3" 
-                dot={false} 
+              <Line
+                type="monotone"
+                name="Forecast"
+                dataKey="forecast"
+                stroke="#B8B3A8"
+                strokeWidth={1.5}
+                strokeDasharray="3 3"
+                dot={false}
               />
             </LineChart>
           </ResponsiveContainer>
@@ -497,13 +409,13 @@ export const SimulationCenter: React.FC = () => {
             <tbody className="divide-y divide-dark-border divide-opacity-35">
               {[...stream].reverse().map((row, idx) => {
                 const dev = ((row.production - row.forecast) / row.forecast) * 100;
-                
+
                 return (
-                  <tr 
-                    key={idx} 
+                  <tr
+                    key={`${row.timestamp}-${idx}`}
                     className={`transition duration-150 ${
-                      row.status === 'CRITICAL' 
-                        ? 'bg-accent-red bg-opacity-[0.04] text-accent-red hover:bg-opacity-[0.08]' 
+                      row.status === 'CRITICAL'
+                        ? 'bg-accent-red bg-opacity-[0.04] text-accent-red hover:bg-opacity-[0.08]'
                         : 'hover:bg-dark-elevated text-text-secondary hover:text-text-primary'
                     }`}
                   >
@@ -517,8 +429,8 @@ export const SimulationCenter: React.FC = () => {
                     <td className="py-3 text-right">{row.anomalyScore}</td>
                     <td className="py-3 text-center">
                       <span className={`px-2 py-0.5 rounded text-[9px] font-bold font-mono ${
-                        row.status === 'CRITICAL' 
-                          ? 'bg-accent-red text-white' 
+                        row.status === 'CRITICAL'
+                          ? 'bg-accent-red text-white'
                           : 'bg-dark-bg border border-dark-border text-text-secondary'
                       }`}>
                         {row.status}

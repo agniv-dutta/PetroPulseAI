@@ -84,54 +84,75 @@ export interface ForecastResponse {
 
 // Anomaly Response
 export interface AnomalyResponse {
-  id: string
-  asset_id: string
-  detected_at: string
-  window_start: string
-  window_end: string
+  assetId: string
+  assetName?: string
+  field?: string
+  basin?: string
   severity: 'NORMAL' | 'WATCH' | 'ALERT' | 'CRITICAL'
-  anomaly_score: number
-  deviation_pct: number
-  expected_bbl_d: number
-  actual_bbl_d: number
-  contributing_features: Array<{
-    feature: string
+  anomalyScore: number
+  deviationPct: number
+  expectedBblD?: number
+  actualBblD?: number
+  contributingFeatures: Array<{
+    label: string
     importance: number
+    [key: string]: unknown
   }>
-  status: 'ACTIVE' | 'ACKNOWLEDGED' | 'RESOLVED'
+  detectedAt?: string
+  aipsPriority?: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL'
+  status: string
 }
 
-// AIPS Score Response
+// AIPS Score Response (GET /aips/{asset_id})
 export interface AIPSScoreResponse {
   asset_id: string
-  aips_score: number
+  score: number
   priority: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL'
   breakdown: Record<string, unknown>
-  created_at: string
+  confidence_breakdown: Record<string, number>
+  estimated_recovery_mmbbl?: number
+  estimated_value_usd_m?: number
 }
 
-// Asset Ranking Response
+// Asset Ranking Response row (GET /aips/ranking -> { rows, generated_at })
 export interface AssetRankingResponse {
   rank: number
-  asset_id: string
-  asset_name: string
-  aips_score: number
+  assetId: string
+  name: string
   priority: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL'
-  field: string
-  basin: string
+  field?: string
+  basin?: string
+  aipsScore: number
+  breakdown?: Record<string, unknown>
+  estimatedValueUsdM?: number
+  estimatedRecoveryMmbbl?: number
+  anomalyScore: number
+  deviationPct: number
+  currentProdBblD?: number
+  expectedProdBblD?: number
+  declineRatePctPerMonth?: number
+  recoveryOpportunityPct?: number
 }
 
-// SHAP Explanation Response
+// SHAP Explanation Response (GET /shap/{asset_id})
 export interface SHAPExplanationResponse {
   asset_id: string
-  forecast_run_id: number
-  shap_values: Array<{
+  terminology?: string
+  caveat?: string
+  base_value?: number
+  explainer_method?: string
+  contributions: Array<{
     feature: string
-    value: number
-    importance: number
+    label: string
+    value?: number
+    baseline?: number
+    shap_value?: number
+    direction?: 'UPWARD' | 'DOWNWARD'
+    relative_contribution_pct?: number
+    share_pct?: number
   }>
-  feature_names: string[]
-  base_value: number
+  feature_importance?: Array<{ feature: string; label: string; importance: number }>
+  data_source?: string
 }
 
 // Simulation Response

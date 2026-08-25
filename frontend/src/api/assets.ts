@@ -19,10 +19,10 @@ export const assetsApi = {
   },
 
   /**
-   * Get a specific asset by ID.
+   * Get the canonical analysis bundle for an asset by ID.
    */
-  get: async (assetId: string) => {
-    return client.get<AssetResponse>(`/assets/${encodeURIComponent(assetId)}`)
+  get: async <T = AssetResponse>(assetId: string) => {
+    return client.get<T>(`/assets/${encodeURIComponent(assetId)}`)
   },
 
   /**

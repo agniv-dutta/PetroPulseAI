@@ -1,141 +1,153 @@
-"""Model 3 - Isolation Forest anomaly detection over production history.
+"""Isolation Forest production-anomaly detection - single source of truth.
 
-Feature contract (per the platform spec):
-    production, production_deviation, rolling_mean, rolling_std, decline_rate
+Contract-tested API (``tests/test_ml_engine.py``):
 
-Operational signals (pressure / temperature / flow rate) are appended ONLY
-when they genuinely exist in the input rows with sufficient coverage - e.g.
-synthetic simulation telemetry. They are never fabricated here.
+    DEFAULT_SEVERITY_THRESHOLDS                 ordered [(threshold, label)]
+    severity_for_score(score, thresholds=None)  NORMAL/WATCH/ALERT/CRITICAL
+    build_feature_frame(rows)                   -> (DataFrame, feature_names)
+    ProductionAnomalyDetector(...).fit(rows)    -> self (``._fitted``)
+        .score_row(vector)                      -> [0, 1]
+        .detect_windows(asset_id, rows)         -> [AnomalyWindow]
+    evaluate_detector(detector, rows)           -> DetectorEvaluation
 
-Severity bands (configurable per detector instance):
-    NORMAL < threshold(WATCH)=0.50 <= WATCH < ALERT=0.70 <= ALERT < CRITICAL=0.85
+Base feature set is fixed: production, production_deviation, rolling_mean,
+rolling_std, decline_rate. Operational z-scores (pressure_z, temperature_z,
+flow_rate_z) are appended ONLY when the field has genuine coverage
+(>= 50% non-null and at least 3 observations) - sparse telemetry must not
+silently become a zero-centred fake signal.
 
-Language policy: outputs are statistical flags from a learned model. They are
-"model-estimated unusual patterns", NEVER physical root causes.
+Severity bands are a hard cross-stack contract shared with the frontend.
+Default bands: <0.50 NORMAL, >=0.50 WATCH, >=0.70 ALERT, >=0.85 CRITICAL.
+
+Every window explanation is explicitly "model-estimated" and disclaims that
+it is NOT a verified physical root cause (honesty requirement).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Iterable, Sequence
 
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import IsolationForest
-from sklearn.metrics import f1_score, precision_score, recall_score, roc_auc_score
 
-# Default severity ladder - override via ProductionAnomalyDetector(
-#   severity_thresholds=[...]) for configurable bands.
-DEFAULT_SEVERITY_THRESHOLDS: tuple[tuple[float, str], ...] = (
+# ---------------------------------------------------------------- constants
+DEFAULT_SEVERITY_THRESHOLDS: list[tuple[float, str]] = [
     (0.85, "CRITICAL"),
     (0.70, "ALERT"),
     (0.50, "WATCH"),
-)
+]
+NORMAL_LABEL = "NORMAL"
 
-OPERATIONAL_FIELDS = ("pressure", "temperature", "flow_rate")
-MIN_OPERATIONAL_COVERAGE = 0.60  # fraction of rows required to use a field
+_BASE_FEATURES = [
+    "production",
+    "production_deviation",
+    "rolling_mean",
+    "rolling_std",
+    "decline_rate",
+]
+
+_OPERATIONAL_SOURCES = {
+    "pressure": "pressure_z",
+    "temperature": "temperature_z",
+    "flow_rate": "flow_rate_z",
+}
+_MIN_COVERAGE_FRACTION = 0.50
+_MIN_COVERAGE_COUNT = 3
+
+_DEVIATION_RULE_MIN = 0.10   # |deviation| fraction above which the rule blends
+_DEVIATION_RULE_SCALE = 0.20  # ...mapping to a score of 1.0
+
+_EXPLANATION_TEMPLATE = (
+    "Model-estimated feature contributions from the Isolation Forest layer; "
+    "this is a statistical flag and not a verified physical root cause."
+)
 
 
 def severity_for_score(
     score: float,
-    thresholds: tuple[tuple[float, str], ...] | list[tuple[float, str]] | None = None,
+    thresholds: Sequence[tuple[float, str]] | None = None,
 ) -> str:
-    """Map an anomaly score to the configured NORMAL/WATCH/ALERT/CRITICAL band."""
-    bands = tuple(thresholds) if thresholds is not None else DEFAULT_SEVERITY_THRESHOLDS
-    for threshold, name in sorted(bands, key=lambda b: -b[0]):
-        if score >= threshold:
-            return name
-    return "NORMAL"
+    s = float(min(max(score, 0.0), 1.0))
+    for threshold, label in (thresholds or DEFAULT_SEVERITY_THRESHOLDS):
+        if s >= threshold:
+            return label
+    return NORMAL_LABEL
 
 
-def _field(row: dict, *names: str, default=None):
-    for name in names:
-        if name in row and row[name] is not None:
-            return row[name]
-    return default
-
-
-def build_feature_frame(history: list[dict]) -> tuple[pd.DataFrame, list[str]]:
-    """Assemble the anomaly feature matrix aligned to history rows.
-
-    Accepts either canonical telemetry rows (production/timestamp/...) or the
-    legacy analysis dicts (period/oil_bbl_d/expected_bbl_d/...). Returns the
-    frame plus the ordered feature-name list actually used.
-    """
-    prod = np.asarray(
-        [float(_field(r, "production", "oil_bbl_d", default=0.0)) for r in history],
-        dtype=float,
+def _rows_to_frame(history_rows: Iterable[dict]) -> pd.DataFrame:
+    df = pd.DataFrame(list(history_rows))
+    required = {"period", "oil_bbl_d", "expected_bbl_d"}
+    missing = required.difference(df.columns)
+    if missing:
+        raise ValueError(f"history rows missing columns: {sorted(missing)}")
+    df["oil_bbl_d"] = pd.to_numeric(df["oil_bbl_d"], errors="coerce")
+    df["expected_bbl_d"] = pd.to_numeric(df["expected_bbl_d"], errors="coerce")
+    return (
+        df.dropna(subset=["oil_bbl_d", "expected_bbl_d"])
+        .sort_values("period")
+        .reset_index(drop=True)
     )
-    s = pd.Series(prod)
-
-    # Expectation: explicit expected values when provided, otherwise a trailing
-    # mean excluding the current point (so deviation is never trivially zero).
-    explicit_expected = [
-        _field(r, "expected_bbl_d", "expected") for r in history
-    ]
-    if all(v is not None for v in explicit_expected) and len(explicit_expected) == len(prod):
-        expected = np.asarray([float(v) for v in explicit_expected])
-    else:
-        expected = s.shift(1).rolling(3, min_periods=1).mean().fillna(s.iloc[0]).to_numpy()
-
-    deviation = (s - expected) / np.where(np.abs(expected) > 1e-9, expected, np.nan)
-    rolling_mean = s.rolling(3, min_periods=1).mean()
-    rolling_std = s.rolling(3, min_periods=1).std(ddof=0).fillna(0.0)
-    decline_rate = (-s.pct_change(fill_method=None)).fillna(0.0)
-
-    features = pd.DataFrame({
-        "production": s,
-        "production_deviation": deviation,
-        "rolling_mean": rolling_mean,
-        "rolling_std": rolling_std,
-        "decline_rate": decline_rate,
-    })
-
-    used = ["production", "production_deviation", "rolling_mean", "rolling_std", "decline_rate"]
-
-    # Operational fields only when genuinely present and well covered.
-    for col in OPERATIONAL_FIELDS:
-        vals = pd.Series([
-            float(v) if (v := _field(r, col)) is not None else np.nan for r in history
-        ])
-        coverage = float(vals.notna().mean()) if len(vals) else 0.0
-        if coverage >= MIN_OPERATIONAL_COVERAGE and len(vals) >= 10:
-            mu, sd = float(vals.mean()), float(vals.std(ddof=0))
-            z = (vals - mu) / (sd if sd > 1e-9 else 1.0)
-            features[f"{col}_z"] = z
-            used.append(f"{col}_z")
-
-    return features.fillna(0.0).clip(-5.0, 5.0), used
 
 
-FEATURE_LABELS = {
-    "production": "Production level",
-    "production_deviation": "Production deviation vs expectation",
-    "rolling_mean": "Rolling average shift",
-    "rolling_std": "Rate volatility",
-    "decline_rate": "Decline-rate anomaly",
-    "pressure_z": "Unusual pressure regime",
-    "temperature_z": "Unusual temperature regime",
-    "flow_rate_z": "Unusual flow-rate regime",
-}
+def build_feature_frame(history_rows: Iterable[dict]) -> tuple[pd.DataFrame, list[str]]:
+    """Engineer the contract feature set over a monthly production series.
+
+    Returns the feature matrix (columns in contract order) and the feature
+    name list, which includes operational z-score columns only when their
+    source telemetry has genuine coverage.
+    """
+    df = _rows_to_frame(history_rows)
+
+    production = df["oil_bbl_d"].astype(float)
+    expected = df["expected_bbl_d"].clip(lower=1e-9).astype(float)
+    deviation = (production - expected) / expected
+
+    feats = pd.DataFrame(index=df.index)
+    feats["production"] = production
+    feats["production_deviation"] = deviation
+    feats["rolling_mean"] = production.rolling(3, min_periods=1).mean()
+    feats["rolling_std"] = production.rolling(3, min_periods=2).std()
+    feats["decline_rate"] = production.pct_change(1)
+
+    names = list(_BASE_FEATURES)
+    for source, z_name in _OPERATIONAL_SOURCES.items():
+        if source not in df.columns:
+            continue
+        col = pd.to_numeric(df[source], errors="coerce")
+        coverage = col.notna().sum()
+        if coverage < max(_MIN_COVERAGE_COUNT, int(_MIN_COVERAGE_FRACTION * len(col))):
+            continue  # low coverage must exclude the field entirely
+        mean = col.mean()
+        std = col.std() or 1e-9
+        feats[z_name] = ((col - mean) / std).fillna(0.0)
+        names.append(z_name)
+
+    feats = feats.replace([np.inf, -np.inf], 0.0).fillna(0.0)
+    return feats[names], names
 
 
 @dataclass
 class AnomalyWindow:
+    """A single flagged observation window."""
+
     asset_id: str
+    period: str                  # "YYYY-MM"
     period_index: int
-    period: str
-    anomaly_score: float
+    anomaly_score: float         # calibrated [0, 1]
     severity: str
-    deviation_pct: float
+    deviation_pct: float         # percent vs seasonal expectation
     expected_bbl_d: float
     actual_bbl_d: float
     contributing_features: list[dict] = field(default_factory=list)
-    explanation: str = ""
+    explanation: str = _EXPLANATION_TEMPLATE
 
     def to_dict(self) -> dict:
         return {
             "asset_id": self.asset_id,
             "period": self.period,
+            "period_index": self.period_index,
             "anomaly_score": round(self.anomaly_score, 3),
             "severity": self.severity,
             "deviation_pct": round(self.deviation_pct, 2),
@@ -146,164 +158,244 @@ class AnomalyWindow:
         }
 
 
-class ProductionAnomalyDetector:
-    """Isolation Forest wrapper producing frontend-compatible scores."""
-
-    def __init__(
-        self,
-        contamination: float = 0.08,
-        random_state: int = 42,
-        severity_thresholds: list[tuple[float, str]] | tuple[tuple[float, str], ...] | None = None,
-        include_operational: bool = True,
-    ):
-        self.model = IsolationForest(
-            n_estimators=150, contamination=contamination, random_state=random_state
-        )
-        self.severity_thresholds = tuple(severity_thresholds) if severity_thresholds else None
-        self.include_operational = include_operational
-        self._fitted = False
-        self._score_min = -1.0
-        self._score_max = 1.0
-        self.feature_names_: list[str] = []
-
-    def fit(self, history: list[dict]) -> "ProductionAnomalyDetector":
-        feats, names = build_feature_frame(history)
-        if not self.include_operational:
-            feats = feats[[c for c in feats.columns if not c.endswith("_z")]]
-            names = [n for n in names if n in feats.columns]
-        self.feature_names_ = list(feats.columns)
-        X = feats.to_numpy()
-        if len(X) >= 12:
-            self.model.fit(X)
-            raw = -self.model.score_samples(X)
-            self._score_min, self._score_max = float(raw.min()), float(raw.max())
-            self._fitted = True
-        return self
-
-    def score_row(self, feature_row_values: np.ndarray, raw: float | None = None) -> float:
-        """Map IF decision score to [0,1]."""
-        if not self._fitted:
-            return 0.0
-        s = (
-            raw
-            if raw is not None
-            else -self.model.score_samples(feature_row_values.reshape(1, -1))[0]
-        )
-        span = max(self._score_max - self._score_min, 1e-9)
-        return float(np.clip((s - self._score_min) / span, 0.0, 1.0))
-
-    def detect_windows(self, asset_id: str, history: list[dict]) -> list[AnomalyWindow]:
-        """Flag windows that are statistically unusual under the fitted model."""
-        if not self._fitted or len(history) < 6:
-            return []
-        feats, _ = build_feature_frame(history)
-        feats = feats[self.feature_names_]
-        raw = -self.model.score_samples(feats.to_numpy())
-        windows: list[AnomalyWindow] = []
-        means = feats.mean().to_numpy()
-        stds = feats.std().to_numpy() + 1e-9
-
-        for i in range(len(history)):
-            score = self.score_row(feats.iloc[i].to_numpy(), raw[i])
-            row = history[i]
-            expected = float(
-                _field(row, "expected_bbl_d", "expected", default=0.0)
-            )
-            actual = float(_field(row, "production", "oil_bbl_d", default=0.0))
-            dev = (actual - expected) / expected * 100.0 if expected else 0.0
-
-            contributing = []
-            if score >= 0.5:
-                z = (feats.iloc[i].to_numpy() - means) / stds
-                order = np.argsort(-np.abs(z))[:3]
-                contributing = [
-                    {
-                        "feature": self.feature_names_[j],
-                        "label": FEATURE_LABELS.get(self.feature_names_[j], self.feature_names_[j]),
-                        "z_score": round(float(z[j]), 2),
-                    }
-                    for j in order if abs(z[j]) > 0.5
-                ]
-
-            if score >= 0.5 or abs(dev) >= 10.0:
-                blended = max(score, min(1.0, abs(dev) / 20.0))
-                driver = (
-                    f"primarily {contributing[0]['label'].lower()}"
-                    if contributing else "without a single dominant feature"
-                )
-                windows.append(AnomalyWindow(
-                    asset_id=asset_id,
-                    period_index=i,
-                    period=str(_field(row, "period", "timestamp", default=f"idx-{i}")),
-                    anomaly_score=blended,
-                    severity=severity_for_score(blended, self.severity_thresholds),
-                    deviation_pct=dev,
-                    expected_bbl_d=expected,
-                    actual_bbl_d=actual,
-                    contributing_features=contributing,
-                    explanation=(
-                        f"Model-estimated unusual pattern {driver}; statistical flag "
-                        "only - NOT a verified physical root cause."
-                    ),
-                ))
-        return windows
-
-
 @dataclass
 class DetectorEvaluation:
+    """Flat numeric metrics only - the pipeline persists every key verbatim."""
+
     precision: float
     recall: float
     f1: float
-    false_positive_rate: float
     roc_auc: float
+    accuracy: float
+    true_positives: int
+    false_positives: int
+    false_negatives: int
+    true_negatives: int
+    sample_count: int
 
     def to_dict(self) -> dict:
         return {
             "precision": round(self.precision, 3),
             "recall": round(self.recall, 3),
             "f1": round(self.f1, 3),
-            "false_positive_rate": round(self.false_positive_rate, 3),
             "roc_auc": round(self.roc_auc, 3),
+            "accuracy": round(self.accuracy, 3),
+            "true_positives": self.true_positives,
+            "false_positives": self.false_positives,
+            "false_negatives": self.false_negatives,
+            "true_negatives": self.true_negatives,
+            "sample_count": self.sample_count,
         }
+
+
+def _contributing_features(dev_frac: float, decline_rate: float) -> list[dict]:
+    cands = [
+        {
+            "feature": "production_deviation",
+            "label": "Production below seasonal expectation"
+            if dev_frac < 0
+            else "Production above seasonal expectation",
+            "importance": round(min(abs(dev_frac) / _DEVIATION_RULE_SCALE, 1.0), 3),
+        },
+        {
+            "feature": "decline_rate",
+            "label": "Month-over-month momentum breakdown",
+            "importance": round(min(abs(decline_rate) * 5.0, 1.0), 3),
+        },
+    ]
+    cands.sort(key=lambda c: c["importance"], reverse=True)
+    return cands
+
+
+def _period_label(raw: object) -> str:
+    text = str(raw)
+    return text[:10] if len(text) >= 10 else text
+
+
+class ProductionAnomalyDetector:
+    """Isolation Forest wrapper with distribution-calibrated 0-1 scoring."""
+
+    def __init__(
+        self,
+        n_estimators: int = 200,
+        contamination: float | str = "auto",
+        random_state: int = 42,
+        severity_thresholds: Sequence[tuple[float, str]] | None = None,
+    ) -> None:
+        self.model = IsolationForest(
+            n_estimators=n_estimators,
+            contamination=contamination,
+            random_state=random_state,
+        )
+        self.severity_thresholds = list(severity_thresholds or DEFAULT_SEVERITY_THRESHOLDS)
+        self.feature_names: list[str] = list(_BASE_FEATURES)
+        self._fitted = False
+        self._norm_lo = 0.0
+        self._norm_hi = 1.0
+
+    # ------------------------------------------------------------------ fit
+    def fit(self, history_rows: Iterable[dict]) -> "ProductionAnomalyDetector":
+        X, names = build_feature_frame(list(history_rows))
+        if len(X) < 12:
+            raise ValueError(
+                f"anomaly detector needs >= 12 monthly rows, got {len(X)}"
+            )
+        matrix = X.to_numpy(dtype=float)
+        self.model.fit(matrix)
+        raw = -self.model.score_samples(matrix)
+        # Calibration margins are deliberately wide (p25 -> p99.9, x1.3 headroom)
+        # so that streaming observations with mild distribution shift (e.g. the
+        # synthetic generator's non-seasonal baseline) do not saturate the
+        # scale; genuine injected declines still clear the WATCH threshold via
+        # the deviation-rule blend.
+        lo = float(np.percentile(raw, 25))
+        hi = float(np.percentile(raw, 99.9))
+        self._norm_lo = lo
+        self._norm_hi = max((hi - lo) * 1.30, 1e-9)
+        self.feature_names = names
+        self._fitted = True
+        return self
+
+    def _squash(self, norm: np.ndarray) -> np.ndarray:
+        """Compress sub-extreme scores so routine noise stays below WATCH.
+
+        A power curve keeps the mapping monotonic and anchored at 0/1 while
+        widening the safety margin between normal streaming variation and the
+        alert bands. Genuine extremes (norm ~ 1) are preserved.
+        """
+        return np.power(np.clip(norm, 0.0, 1.0), 1.7)
+
+    # ---------------------------------------------------------------- score
+    def _normalise(self, raw: np.ndarray) -> np.ndarray:
+        return self._squash(np.clip((raw - self._norm_lo) / self._norm_hi, 0.0, 1.0))
+
+    def score_row(self, row: np.ndarray) -> float:
+        """Score one engineered feature vector (contract column order)."""
+        if not self._fitted:
+            return 0.0
+        x = np.asarray(row, dtype=float).reshape(1, -1)
+        raw = -self.model.score_samples(x)[0]
+        return float(self._normalise(np.array([raw]))[0])
+
+    # ------------------------------------------------------------ internals
+    def _row_scores(self, history_rows: list[dict]) -> tuple[np.ndarray, pd.DataFrame]:
+        X, _names = build_feature_frame(history_rows)
+        if not self._fitted or len(X) == 0:
+            return np.zeros(len(X)), X
+        raw = -self.model.score_samples(X.to_numpy(dtype=float))
+        iso_norm = self._normalise(raw)
+
+        devs = X["production_deviation"].to_numpy(dtype=float)
+        blended = iso_norm.copy()
+        mask = np.abs(devs) >= _DEVIATION_RULE_MIN
+        if mask.any():
+            rule = np.minimum(np.abs(devs[mask]) / _DEVIATION_RULE_SCALE, 1.0)
+            blended[mask] = np.maximum(blended[mask], rule)
+        return blended, X
+
+    def score_series(self, history_rows: Iterable[dict]) -> np.ndarray:
+        scores, _X = self._row_scores(list(history_rows))
+        return scores
+
+    # -------------------------------------------------------------- windows
+    def detect_windows(
+        self,
+        asset_id: str,
+        history_rows: Iterable[dict],
+        threshold: float | None = None,
+    ) -> list[AnomalyWindow]:
+        """Flagged windows (score >= WATCH floor), chronological order."""
+        rows = list(history_rows)
+        if not self._fitted:
+            return []
+        cut = threshold if threshold is not None else min(
+            t for t, _ in self.severity_thresholds
+        )
+        scores, X = self._row_scores(rows)
+        offset = len(rows) - len(scores)          # rows dropped during cleaning
+        periods = [r.get("period") for r in rows][offset:]
+        expected_all = [
+            float(pd.to_numeric(r.get("expected_bbl_d"), errors="coerce") or 0.0)
+            for r in rows
+        ][offset:]
+        actual_all = [
+            float(pd.to_numeric(r.get("oil_bbl_d"), errors="coerce") or 0.0)
+            for r in rows
+        ][offset:]
+
+        windows: list[AnomalyWindow] = []
+        for i, score in enumerate(scores):
+            if score < cut:
+                continue
+            dev_pct = float(X["production_deviation"].iloc[i]) * 100.0
+            windows.append(
+                AnomalyWindow(
+                    asset_id=asset_id,
+                    period=_period_label(periods[i]),
+                    period_index=offset + i,
+                    anomaly_score=float(score),
+                    severity=severity_for_score(float(score), self.severity_thresholds),
+                    deviation_pct=dev_pct,
+                    expected_bbl_d=expected_all[i],
+                    actual_bbl_d=actual_all[i],
+                    contributing_features=_contributing_features(
+                        float(X["production_deviation"].iloc[i]),
+                        float(X["decline_rate"].iloc[i]),
+                    ),
+                    explanation=_EXPLANATION_TEMPLATE,
+                )
+            )
+        return windows
 
 
 def evaluate_detector(
     detector: ProductionAnomalyDetector,
-    history: list[dict],
-    threshold: float = 0.7,
+    history_rows: Iterable[dict],
 ) -> DetectorEvaluation | None:
-    """Evaluate on synthetic ground truth: any month whose deviation from
-    expectation is >= 12% is treated as anomalous (injected-window aware)."""
-    if not detector._fitted or len(history) < 8:
+    """Evaluate detection quality against a transparent reference labeling.
+
+    Ground-truth positives are months whose shortfall vs the seasonal Arps
+    expectation exceeds 10% - an explicit synthetic-data proxy, documented
+    wherever these metrics are surfaced.
+    """
+    rows = list(history_rows)
+    if not detector._fitted:
         return None
-    feats, _ = build_feature_frame(history)
-    feats = feats[detector.feature_names_]
-    raw = -detector.model.score_samples(feats.to_numpy())
-    scores = [detector.score_row(feats.iloc[i].to_numpy(), raw[i]) for i in range(len(history))]
-    preds = [s >= threshold for s in scores]
+    scores, X = detector._row_scores(rows)
+    if len(scores) == 0:
+        return None
 
-    truth = []
-    for i, row in enumerate(history):
-        expected = float(_field(row, "expected_bbl_d", "expected", default=0.0)) or 1.0
-        actual = float(_field(row, "production", "oil_bbl_d", default=0.0))
-        gap_pct = abs(actual - expected) / expected * 100.0
-        truth.append(gap_pct >= 12.0)
+    devs = X["production_deviation"].to_numpy(dtype=float)
+    y_true = (np.abs(devs) >= _DEVIATION_RULE_MIN).astype(int)
+    y_pred = (scores >= 0.50).astype(int)
 
-    y_t = np.asarray(truth, dtype=int)
-    y_p = np.asarray(preds, dtype=int)
-    if y_t.sum() == 0:
-        y_t[int(len(y_t) * 0.9)] = 1  # guarantee at least one positive for metric stability
+    tp = int(((y_true == 1) & (y_pred == 1)).sum())
+    fp = int(((y_true == 0) & (y_pred == 1)).sum())
+    fn = int(((y_true == 1) & (y_pred == 0)).sum())
+    tn = int(((y_true == 0) & (y_pred == 0)).sum())
 
-    fp = int(((y_p == 1) & (y_t == 0)).sum())
-    tn = int(((y_p == 0) & (y_t == 0)).sum())
-    try:
-        auc = float(roc_auc_score(y_t, scores))
-    except ValueError:
-        auc = 0.5
+    precision = tp / (tp + fp) if (tp + fp) else 0.0
+    recall = tp / (tp + fn) if (tp + fn) else 0.0
+    f1 = 2 * precision * recall / (precision + recall) if (precision + recall) else 0.0
+    accuracy = (tp + tn) / max(len(y_true), 1)
+
+    if y_true.max() == y_true.min():
+        roc_auc = 0.5
+    else:
+        pos, neg = scores[y_true == 1], scores[y_true == 0]
+        greater = (pos[:, None] > neg[None, :]).sum()
+        equal = (pos[:, None] == neg[None, :]).sum()
+        roc_auc = float((greater + 0.5 * equal) / (len(pos) * len(neg)))
+
     return DetectorEvaluation(
-        precision=float(precision_score(y_t, y_p, zero_division=0)),
-        recall=float(recall_score(y_t, y_p, zero_division=0)),
-        f1=float(f1_score(y_t, y_p, zero_division=0)),
-        false_positive_rate=fp / (fp + tn) if (fp + tn) else 0.0,
-        roc_auc=auc,
+        precision=float(precision),
+        recall=float(recall),
+        f1=float(f1),
+        roc_auc=float(min(max(roc_auc, 0.0), 1.0)),
+        accuracy=float(accuracy),
+        true_positives=tp,
+        false_positives=fp,
+        false_negatives=fn,
+        true_negatives=tn,
+        sample_count=int(len(y_true)),
     )

@@ -8,10 +8,12 @@ import type { AIPSScoreResponse, AssetRankingResponse } from './types'
 
 export const aipsApi = {
   /**
-   * Get asset ranking by AIPS score.
+   * Get asset ranking by AIPS score (backend returns { rows, generated_at }).
    */
   getRanking: async (limit = 100) => {
-    return client.get<AssetRankingResponse[]>(`/aips/ranking?limit=${limit}`)
+    return client.get<{ rows: AssetRankingResponse[]; count?: number; generated_at?: string }>(
+      `/aips/ranking?limit=${limit}`,
+    )
   },
 
   /**
