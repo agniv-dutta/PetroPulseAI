@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { AIPSBreakdown } from '../components/AIPSBreakdown';
 import { calculateAIPS } from '../utils/aipsCalculator';
+import { ProvenanceBadge } from '../components/ProvenanceBadge';
 
 export const InterventionPriority: React.FC = () => {
   const [printSuccess, setPrintSuccess] = useState(false);
@@ -56,6 +57,9 @@ export const InterventionPriority: React.FC = () => {
 
   return (
     <div className="space-y-6 print:bg-white print:text-black">
+      {/* Provenance Banner */}
+      <ProvenanceBadge sourceType="DERIVED" context="banner" disclaimer="Decision-support prioritization score \u2014 not an autonomous intervention decision" />
+
       {/* Header and Actions */}
       <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-dark-border pb-4 gap-4 print:border-black">
         <div>

@@ -45,6 +45,13 @@ def list_anomalies(db: Session = Depends(get_db)) -> dict:
                 "explanation": e.explanation,
                 "modelVersion": e.model_version,
                 "source": "DERIVED",
+                "provenance": {
+                    "sourceType": "DERIVED",
+                    "disclaimer": (
+                        "Model-estimated anomaly — trained/evaluated "
+                        "on synthetic high-frequency scenarios"
+                    ),
+                },
             }
             for e in events
         ],
@@ -83,6 +90,13 @@ def attribution(asset_id: str, db: Session = Depends(get_db)) -> dict:
         **analysis["attribution"],
         "shap_explainer": "TreeExplainer (GradientBoosting)",
         "data_source": "DERIVED",
+        "provenance": {
+            "sourceType": "DERIVED",
+            "disclaimer": (
+                "Model-estimated feature contributions — "
+                "not verified physical root causes"
+            ),
+        },
     }
 
 
@@ -105,6 +119,13 @@ def priority(asset_id: str, db: Session = Depends(get_db)) -> dict:
             "intervention_cost_usd_m": intervention_cost_usd_m,
             "estimated_value_usd_m": estimated_value,
             "roi_multiple": round(estimated_value / max(intervention_cost_usd_m, 1e-9), 1),
+        },
+        "provenance": {
+            "sourceType": "DERIVED",
+            "disclaimer": (
+                "Decision-support prioritization score — "
+                "not an autonomous intervention decision"
+            ),
         },
     }
 

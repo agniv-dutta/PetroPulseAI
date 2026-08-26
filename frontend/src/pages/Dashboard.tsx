@@ -29,7 +29,7 @@ import {
   Loader2
 } from 'lucide-react';
 import { AssetMap } from '../components/AssetMap';
-import { DataTransparencyBanner } from '../components/DataTransparencyBanner';
+import { ProvenanceBadge } from '../components/ProvenanceBadge';
 import { aipsApi } from '../api/aips';
 import { anomalyApi } from '../api/anomaly';
 import { healthApi } from '../api/health';
@@ -251,8 +251,8 @@ export const Dashboard: React.FC = () => {
       {/* MAIN CONTAINER */}
       <div style={{ padding: '24px 32px', flex: 1, display: 'flex', flexDirection: 'column', gap: '24px' }}>
 
-        {/* DATA TRANSPARENCY BANNER */}
-        <DataTransparencyBanner context="dashboard" isDismissible />
+        {/* DATA PROVENANCE BANNER */}
+        <ProvenanceBadge sourceType="DERIVED" context="banner" disclaimer="Real historical production + derived analytics" isDismissible />
 
         {/* TOP HEADER & SEARCH */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '16px' }}>

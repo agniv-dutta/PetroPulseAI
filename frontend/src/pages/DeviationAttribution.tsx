@@ -18,6 +18,7 @@ import {
   Sliders,
   ExternalLink
 } from 'lucide-react';
+import { ProvenanceBadge } from '../components/ProvenanceBadge';
 
 export interface SHAPFeature {
   name: string;
@@ -133,6 +134,9 @@ export const DeviationAttribution: React.FC = () => {
   return (
     <div style={{ backgroundColor: '#080909', minHeight: '100vh', color: '#F3EFE4', padding: '24px 32px' }}>
       
+      {/* PROVENANCE BANNER */}
+      <ProvenanceBadge sourceType="DERIVED" context="banner" disclaimer="Model-estimated feature contributions \u2014 not verified physical root causes" />
+
       {/* BREADCRUMB & BACK BUTTON */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: '#B8B3A8' }}>

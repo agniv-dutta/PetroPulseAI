@@ -28,6 +28,7 @@ import {
 import { RecoveryOpportunityCard } from '../components/RecoveryOpportunityCard';
 import { AIPSBreakdown } from '../components/AIPSBreakdown';
 import { SHAPExplanationCard } from '../components/SHAPExplanationCard';
+import { ProvenanceBadge } from '../components/ProvenanceBadge';
 import { assetsApi } from '../api/assets';
 
 // Shape of GET /assets/{id} - produced by app.intelligence.pipeline.analyze_asset
@@ -264,6 +265,13 @@ export const AssetDetail: React.FC = () => {
       {/* MAIN CONTENT */}
       {!loading && !error && d && (
       <>
+      {/* PROVENANCE BANNER */}
+      <ProvenanceBadge
+        sourceType={(d.data_source as 'REAL' | 'SYNTHETIC' | 'DERIVED') || 'SYNTHETIC'}
+        context="banner"
+        disclaimer={d.provenance?.disclaimer || 'Model-estimated values \u2014 trained/evaluated on synthetic data'}
+      />
+
       {/* BREADCRUMB & BACK BUTTON */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: '#B8B3A8' }}>

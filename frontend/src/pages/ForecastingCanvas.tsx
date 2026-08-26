@@ -18,6 +18,7 @@ import {
   RefreshCw,
   CheckCircle2
 } from 'lucide-react';
+import { ProvenanceBadge } from '../components/ProvenanceBadge';
 
 export type HorizonOption = '30D' | '90D' | '180D' | '365D';
 
@@ -156,6 +157,9 @@ export const ForecastingCanvas: React.FC = () => {
   return (
     <div style={{ backgroundColor: '#080909', minHeight: '100vh', color: '#F3EFE4', padding: '24px 32px' }}>
       
+      {/* PROVENANCE BANNER */}
+      <ProvenanceBadge sourceType="DERIVED" context="banner" disclaimer="Model-estimated production forecast \u2014 trained on synthetic data" />
+
       {/* 1. PAGE HEADER & BADGES */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '16px', marginBottom: '24px' }}>
         <div>

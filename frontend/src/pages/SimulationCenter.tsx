@@ -9,7 +9,7 @@ import {
   RotateCcw
 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip } from 'recharts';
-import { DataTransparencyBanner } from '../components/DataTransparencyBanner';
+import { ProvenanceBadge } from '../components/ProvenanceBadge';
 import { useApiData, useSimulationSocket } from '../api/hooks';
 import { api, type LeaderboardRow } from '../api/client';
 import { mockAssets } from '../data/mockData';
@@ -144,8 +144,8 @@ export const SimulationCenter: React.FC = () => {
 
   return (
     <div className="space-y-6 relative">
-      {/* Data Transparency Banner */}
-      <DataTransparencyBanner context="simulation" isDismissible />
+      {/* Data Provenance Banner */}
+      <ProvenanceBadge sourceType="SYNTHETIC" context="banner" disclaimer="\u26A0 SYNTHETIC DATA \u2014 NOT ACTUAL ONGC TELEMETRY" isDismissible />
 
       {/* ERROR STATE */}
       {error && (

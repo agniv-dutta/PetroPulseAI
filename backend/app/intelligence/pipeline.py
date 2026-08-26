@@ -130,6 +130,18 @@ def analyze_asset(db: Session, asset: Asset, persist: bool = True) -> dict:
         recovery=recovery,
     ))
 
+    # Determine provenance from the actual source_type column in the database.
+    # SYNTHETIC data must NEVER be labeled REAL.
+    source_types_in_history = list({r.source_type for r in history})
+    if source_types_in_history == ["REAL"]:
+        provenance_label = "REAL"
+    elif "SYNTHETIC" in source_types_in_history:
+        provenance_label = "SYNTHETIC"
+    elif source_types_in_history == ["DERIVED"]:
+        provenance_label = "DERIVED"
+    else:
+        provenance_label = "SYNTHETIC"
+
     result = {
         "asset": {
             "id": code,
@@ -157,9 +169,36 @@ def analyze_asset(db: Session, asset: Asset, persist: bool = True) -> dict:
         "backtest": backtest.get("overall"),
         "backtest_by_horizon": {k: v for k, v in backtest.items() if k != "overall"},
         "feature_importance": forecaster.feature_importance(),
-        "attribution": attribution,
-        "recovery": recovery.to_dict(),
-        "aips": aips.to_dict(),
+        "attribution": {
+            **attribution,
+            "provenance": {
+                "sourceType": "DERIVED",
+                "disclaimer": (
+                    "Model-estimated feature contributions — "
+                    "not verified physical root causes"
+                ),
+            },
+        },
+        "recovery": {
+            **recovery.to_dict(),
+            "provenance": {
+                "sourceType": "DERIVED",
+                "disclaimer": (
+                    "Estimated Recovery Opportunity — "
+                    "not guaranteed"
+                ),
+            },
+        },
+        "aips": {
+            **aips.to_dict(),
+            "provenance": {
+                "sourceType": "DERIVED",
+                "disclaimer": (
+                    "Decision-support prioritization score — "
+                    "not an autonomous intervention decision"
+                ),
+            },
+        },
         "recommendations": generate_recommendations(
             deviation_pct=(actual_last - expected_last) / max(expected_last, 1e-9) * 100.0,
             anomaly_score=latest_score,
@@ -171,7 +210,15 @@ def analyze_asset(db: Session, asset: Asset, persist: bool = True) -> dict:
             aips_priority=aips.priority,
             asset_id=code,
         ).to_dict(),
-        "data_source": "SYNTHETIC",
+        "data_source": provenance_label,
+        "provenance": {
+            "sourceType": provenance_label,
+            "disclaimer": (
+                "Real historical production + derived analytics"
+                if provenance_label == "REAL"
+                else "Model-estimated values — trained/evaluated on synthetic data"
+            ),
+        },
         "analyzed_at": datetime.now(timezone.utc).isoformat(),
     }
 

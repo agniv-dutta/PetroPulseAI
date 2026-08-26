@@ -21,7 +21,7 @@ import {
   X,
   Loader2
 } from 'lucide-react';
-import { DataTransparencyBanner } from '../components/DataTransparencyBanner';
+import { ProvenanceBadge } from '../components/ProvenanceBadge';
 import { anomalyApi } from '../api/anomaly';
 
 export interface AnomalyItem {
@@ -408,9 +408,9 @@ export const AnomalyDetectionCenter: React.FC = () => {
       {/* MAIN CONTENT */}
       {!loading && !error && (
       <>
-      {/* DATA TRANSPARENCY BANNER */}
+      {/* DATA PROVENANCE BANNER */}
       <div style={{ marginBottom: '24px' }}>
-        <DataTransparencyBanner context="anomaly" isDismissible />
+        <ProvenanceBadge sourceType="DERIVED" context="banner" disclaimer="Model-estimated anomaly \u2014 trained/evaluated on synthetic high-frequency scenarios" isDismissible />
       </div>
 
       {/* 1. PAGE HEADER */}
