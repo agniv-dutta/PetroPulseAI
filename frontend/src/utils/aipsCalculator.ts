@@ -1,22 +1,24 @@
 /**
  * Calculate Asset Intervention Priority Score (AIPS)
  *
- * CORRECTED FORMULA:
- * AIPS = (w₁ × Loss_Norm) + (w₂ × Anomaly_Norm)
- *        + (w₃ × Recovery_Norm) - (w₄ × Complexity_Norm)
+ * Canonical formula (backend is single source of truth — see backend/app/services/aips_service.py):
+ * AIPS = (w1 × Loss_Magnitude) + (w2 × Anomaly_Severity)
+ *        + (w3 × Recovery_Opportunity) - (w4 × Intervention_Complexity)
  *
- * Each component is normalized onto a 0-100 scale before weighting so the
- * final score is a true 0-100 priority score:
- * - Loss_Magnitude = |Expected - Actual| / Expected × 100 (always positive)
- *   normalized against a documented reference (18% loss = 100)
- * - Anomaly_Severity = Anomaly_Score (0-1 from Isolation Forest) × 100
- * - Recovery_Opportunity = (Expected - Actual) / Expected × 100
- *                         × Historical_Recovery_Rate × Confidence
- *   normalized against a documented reference (15% opportunity = 100)
- * - Intervention_Complexity = normalized 0-1, applied as a penalty
+ * where
+ * - Loss_Magnitude          = |Expected - Actual| / Expected × 100  (always positive)
+ * - Anomaly_Severity        = Anomaly_Score (0-1) × 100
+ * - Recovery_Opportunity    = max(Expected-Actual,0)/Expected ×100 × Historical_Rate × Model_Confidence
+ * - Intervention_Complexity = normalized 0-1 ×100
  *
- * Weights (positive weights sum to 1.0; complexity is a penalty):
- * w₁ = 0.35, w₂ = 0.25, w₃ = 0.40, w₄ = 0.10
+ * The weighted sum is presented on 0-100 via scale_reference (default 30):
+ *   score = clip( raw / 30 ×100, 0, 100 )
+ * so the MH-07 reference scenario reproduces ~92 → CRITICAL.
+ * Weights: w1=0.30, w2=0.25, w3=0.35, w4=0.10
+ *
+ * NOTE: This module is intentionally kept convergent with the backend for
+ * offline/preview use only. Runtime pages MUST render the backend breakdown
+ * and must not present a competing score in production paths (see audit §4).
  */
 
 export interface AIPSInput {
@@ -54,64 +56,37 @@ export interface AIPSOutput {
   };
 }
 
+const AIPS_WEIGHTS = { loss: 0.30, anomaly: 0.25, recovery: 0.35, complexity: -0.10 } as const;
+const AIPS_SCALE_REFERENCE = 30.0;
+
+function modelConfidenceForAnomaly(anomalyScore: number): number {
+  if (anomalyScore > 0.85) return 0.90;
+  if (anomalyScore >= 0.70) return 0.75;
+  return 0.60;
+}
+
 export function calculateAIPS(input: AIPSInput): AIPSOutput {
-  // Constants
-  const W_LOSS = 0.35;
-  const W_ANOMALY = 0.25;
-  const W_RECOVERY = 0.40;
-  const W_COMPLEXITY = 0.10;
+  const expected = Math.max(Number(input.expected_production), 1e-9);
+  const actual = Number(input.actual_production);
+  const anomalyScore = Math.min(Math.max(Number(input.anomaly_score), 0), 1);
+  const complexity = Math.min(Math.max(Number(input.intervention_complexity), 0), 1);
+  const histRate = Math.min(Math.max(Number(input.historical_recovery_rate), 0), 1);
 
-  // Normalization references (a loss/opportunity at this level = 100 on 0-100 scale)
-  const LOSS_NORM_REFERENCE = 18;      // 18% production loss
-  const RECOVERY_NORM_REFERENCE = 15;  // 15% recovery opportunity
+  const loss_magnitude = Math.abs(expected - actual) / expected * 100.0;
+  const anomaly_severity = anomalyScore; // 0-1
+  const raw_gap_pct = Math.max(expected - actual, 0) / expected * 100.0;
+  const model_confidence = modelConfidenceForAnomaly(anomalyScore);
+  const combined_confidence = (histRate + model_confidence) / 2.0;
+  // Canonical recovery: gap% × hist_rate × model_conf (not combined)
+  const recovery_opportunity = raw_gap_pct * histRate * model_confidence;
 
-  // CORRECTED: Loss Magnitude is always positive
-  const loss_magnitude = Math.abs(input.expected_production - input.actual_production)
-                         / input.expected_production * 100;
+  const lossContribution = AIPS_WEIGHTS.loss * loss_magnitude;
+  const anomalyContribution = AIPS_WEIGHTS.anomaly * anomaly_severity * 100.0;
+  const recoveryContribution = AIPS_WEIGHTS.recovery * recovery_opportunity;
+  const complexityPenalty = AIPS_WEIGHTS.complexity * complexity * 100.0; // negative
+  const rawScore = lossContribution + anomalyContribution + recoveryContribution + complexityPenalty;
+  const aips_score = Math.min(Math.max(rawScore / AIPS_SCALE_REFERENCE * 100.0, 0), 100);
 
-  const anomaly_severity = input.anomaly_score; // Already 0-1
-
-  // Recovery Opportunity (capped by confidence)
-  const raw_recovery_percent = Math.max(
-    0,
-    (input.expected_production - input.actual_production)
-      / input.expected_production * 100
-  );
-
-  // Confidence scoring based on anomaly severity
-  let model_confidence: number;
-  if (input.anomaly_score > 0.85) {
-    model_confidence = 0.90; // High confidence
-  } else if (input.anomaly_score > 0.70) {
-    model_confidence = 0.75; // Medium confidence
-  } else {
-    model_confidence = 0.60; // Low confidence
-  }
-
-  const combined_confidence =
-    (input.historical_recovery_rate + model_confidence) / 2;
-
-  // Recovery opportunity is capped by combined confidence
-  const recovery_opportunity = raw_recovery_percent * combined_confidence;
-
-  // Intervention complexity is already normalized 0-1
-  const intervention_complexity = Math.min(1, Math.max(0, input.intervention_complexity));
-
-  // Normalize each component onto a 0-100 scale before weighting
-  const loss_norm = Math.min(100, loss_magnitude / LOSS_NORM_REFERENCE * 100);
-  const anomaly_norm = anomaly_severity * 100;
-  const recovery_norm = Math.min(100, recovery_opportunity / RECOVERY_NORM_REFERENCE * 100);
-  const complexity_norm = intervention_complexity * 100;
-
-  // Final AIPS score (0-100 scale)
-  const aips_score = Math.min(100, Math.max(0,
-    W_LOSS * loss_norm
-    + W_ANOMALY * anomaly_norm
-    + W_RECOVERY * recovery_norm
-    - W_COMPLEXITY * complexity_norm
-  ));
-
-  // Priority classification
   let priority: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
   if (aips_score >= 80) priority = "CRITICAL";
   else if (aips_score >= 60) priority = "HIGH";
@@ -122,16 +97,16 @@ export function calculateAIPS(input: AIPSInput): AIPSOutput {
     aips_score,
     priority,
     loss_magnitude,
-    loss_magnitude_weight: W_LOSS,
+    loss_magnitude_weight: AIPS_WEIGHTS.loss,
     anomaly_severity,
-    anomaly_severity_weight: W_ANOMALY,
-    recovery_opportunity: Math.min(raw_recovery_percent, recovery_opportunity),
-    recovery_opportunity_weight: W_RECOVERY,
-    intervention_complexity,
-    intervention_complexity_weight: W_COMPLEXITY,
+    anomaly_severity_weight: AIPS_WEIGHTS.anomaly,
+    recovery_opportunity,
+    recovery_opportunity_weight: AIPS_WEIGHTS.recovery,
+    intervention_complexity: complexity,
+    intervention_complexity_weight: Math.abs(AIPS_WEIGHTS.complexity),
     confidence: combined_confidence,
     recovery_confidence_breakdown: {
-      historical_success_rate: input.historical_recovery_rate,
+      historical_success_rate: histRate,
       model_confidence,
       combined_confidence,
     },

@@ -191,16 +191,17 @@ export const simulateYieldChange = (pressurePct: number, chokePct: number): { yi
   };
 };
 
-// 4. AIPS Scoring Parameters (Page 9 - Priority Panel)
+// 4. AIPS Scoring Parameters — reference fixture only (backend is source of truth).
+// Weights mirror backend/app/services/aips_service.py: 0.30/0.25/0.35/-0.10, scale 30.
 export const mockAIPSBreakdown = {
   assetId: "MH-07",
   aipsScore: 92,
-  priority: "CRITICAL",
-  formula: "AIPS = (0.35 × Loss) + (0.25 × Anomaly) + (0.40 × Recovery) - (0.10 × Complexity)",
+  priority: "CRITICAL" as const,
+  formula: "AIPS = 0.30 × Loss_Magnitude + 0.25 × Anomaly_Severity + 0.35 × Recovery_Opportunity − 0.10 × Intervention_Complexity",
   components: [
     {
       name: "Production Loss",
-      weight: 0.35,
+      weight: 0.30,
       value: "17.6% loss",
       contribution: 34.2,
       impact: "HIGH IMPACT",
@@ -216,7 +217,7 @@ export const mockAIPSBreakdown = {
     },
     {
       name: "Recovery Potential",
-      weight: 0.40,
+      weight: 0.35,
       value: "15.0% opportunity",
       contribution: 39.9,
       impact: "HIGH YIELD",
@@ -574,9 +575,9 @@ export interface GlossaryTerm {
 export const mockGlossary: GlossaryTerm[] = [
   {
     term: "AIPS Score",
-    definition: "Asset Intervention Priority Score. A composite metric ranging from 0 to 100 that ranks oil wells based on their economic yield recovery potential.",
+    definition: "Asset Intervention Priority Score. A composite metric ranging from 0 to 100 that ranks oil wells based on their economic yield recovery potential. Backend (app/services/aips_service.py) is the single source of truth.",
     domain: "Asset Optimization",
-    impactContext: "AIPS = (0.30 × Loss) + (0.25 × Anomaly) + (0.35 × Recovery) - (0.10 × Complexity). High AIPS indicates immediate target for field crew."
+    impactContext: "AIPS = 0.30 × Loss_Magnitude + 0.25 × Anomaly_Severity + 0.35 × Recovery_Opportunity − 0.10 × Intervention_Complexity; score = clip(raw / 30 ×100, 0, 100). High AIPS indicates immediate field-verification candidate."
   },
   {
     term: "MMBL",

@@ -1,37 +1,73 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { mockAIPSBreakdown, mockAssets } from '../data/mockData';
-import { 
-  DollarSign, 
-  Users, 
-  Wrench, 
-  Printer, 
+import {
+  DollarSign,
+  Users,
+  Wrench,
+  Printer,
   CheckCircle,
   FileSpreadsheet,
   ChevronDown,
   ChevronUp,
-  Flame
+  Flame,
+  Loader2,
+  AlertTriangle,
 } from 'lucide-react';
 import { AIPSBreakdown } from '../components/AIPSBreakdown';
-import { calculateAIPS } from '../utils/aipsCalculator';
 import { ProvenanceBadge } from '../components/ProvenanceBadge';
+import { client } from '../api/client';
+
+type BackendAIPS = {
+  asset_id?: string;
+  score: number;
+  priority: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
+  breakdown: { loss_magnitude_pct: number; anomaly_severity: number; recovery_opportunity_pct: number; intervention_complexity: number };
+  confidence_breakdown: { historical_recovery_rate: number; model_confidence: number; combined_confidence: number };
+  formula?: string;
+  aips?: unknown;
+};
 
 export const InterventionPriority: React.FC = () => {
   const [printSuccess, setPrintSuccess] = useState(false);
   const [activeAccordion, setActiveAccordion] = useState<string | null>('financial');
   const [investigationRaised, setInvestigationRaised] = useState(false);
+  const [backendAips, setBackendAips] = useState<BackendAIPS | null>(null);
+  const [aipsError, setAipsError] = useState<string | null>(null);
 
-  const { assetId, aipsScore, components, financials, bullets } = mockAIPSBreakdown;
+  // Mock shell retained ONLY for field/ROI static copy when backend is offline.
+  // Scoring is ALWAYS from the backend — single source of truth (audit §4.1).
+  const { assetId, aipsScore: mockScore, components: mockComponents, financials, bullets } = mockAIPSBreakdown;
   const currentAsset = mockAssets.find(a => a.id === assetId) || mockAssets[0];
 
-  // Corrected AIPS calculation (single source of truth)
-  const aipsResult = calculateAIPS({
-    asset_id: assetId,
-    expected_production: 1.42,
-    actual_production: 1.17,
-    anomaly_score: 0.94,
-    historical_recovery_rate: 0.80,
-    intervention_complexity: 0.60,
-  });
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await client.get<BackendAIPS>(`/aips/${encodeURIComponent(assetId)}`);
+        if (!cancelled) { setBackendAips(data); setAipsError(null); }
+      } catch (e) {
+        if (!cancelled) setAipsError(e instanceof Error ? e.message : 'Failed to load AIPS');
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [assetId]);
+
+  const aipsScore = backendAips?.score ?? mockScore;
+  const effective = backendAips ? {
+    aips_score: backendAips.score,
+    priority: backendAips.priority,
+    loss_magnitude: backendAips.breakdown.loss_magnitude_pct,
+    anomaly_severity: backendAips.breakdown.anomaly_severity / 100,
+    recovery_opportunity: backendAips.breakdown.recovery_opportunity_pct,
+    intervention_complexity: backendAips.breakdown.intervention_complexity,
+    confidence: backendAips.confidence_breakdown.combined_confidence,
+  } : null;
+  const components = backendAips ? [
+    { name: 'Production Loss', weight: 0.30, value: `${backendAips.breakdown.loss_magnitude_pct.toFixed(1)}% loss`, contribution: (0.30 * backendAips.breakdown.loss_magnitude_pct).toFixed(1), impact: 'DERIVED', color: '#FF9000' },
+    { name: 'Anomaly Severity', weight: 0.25, value: `${(backendAips.breakdown.anomaly_severity).toFixed(0)} /100`, contribution: (0.25 * backendAips.breakdown.anomaly_severity).toFixed(1), impact: 'DERIVED', color: '#FF3B3B' },
+    { name: 'Recovery Opportunity', weight: 0.35, value: `${backendAips.breakdown.recovery_opportunity_pct.toFixed(1)}%`, contribution: (0.35 * backendAips.breakdown.recovery_opportunity_pct).toFixed(1), impact: 'DERIVED', color: '#00D966' },
+    { name: 'Intervention Complexity', weight: 0.10, value: `${(backendAips.breakdown.intervention_complexity).toFixed(3)}`, contribution: (0.10 * backendAips.breakdown.intervention_complexity * 100).toFixed(1), impact: 'PENALTY', color: '#B8B3A8' },
+  ] : mockComponents;
 
   const toggleAccordion = (name: string) => {
     setActiveAccordion(activeAccordion === name ? null : name);
@@ -170,16 +206,27 @@ export const InterventionPriority: React.FC = () => {
         </div>
       </div>
 
-      {/* Corrected AIPS Breakdown (formula, components, confidence) */}
-      <AIPSBreakdown
-        aips_score={aipsResult.aips_score}
-        priority={aipsResult.priority}
-        loss_magnitude={aipsResult.loss_magnitude}
-        anomaly_severity={aipsResult.anomaly_severity}
-        recovery_opportunity={aipsResult.recovery_opportunity}
-        intervention_complexity={aipsResult.intervention_complexity}
-        confidence={aipsResult.confidence}
-      />
+      {/* Backend-derived AIPS Breakdown — single source of truth */}
+      {aipsError && (
+        <div className="flex items-center gap-2 p-3 bg-accent-red/10 border border-accent-red/30 text-accent-red text-xs font-mono">
+          <AlertTriangle size={14} /> Backend AIPS unavailable — showing cached reference (score {mockScore}). Error: {aipsError}
+        </div>
+      )}
+      {!effective ? (
+        <div className="flex items-center justify-center gap-2 py-12 text-text-dim text-xs font-mono">
+          <Loader2 size={16} className="animate-spin text-accent-amber" /> Loading decision intelligence from backend…
+        </div>
+      ) : (
+        <AIPSBreakdown
+          aips_score={effective.aips_score}
+          priority={effective.priority}
+          loss_magnitude={effective.loss_magnitude}
+          anomaly_severity={effective.anomaly_severity}
+          recovery_opportunity={effective.recovery_opportunity}
+          intervention_complexity={effective.intervention_complexity}
+          confidence={effective.confidence}
+        />
+      )}
 
       {/* Detailed analysis grid */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

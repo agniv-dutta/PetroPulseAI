@@ -141,10 +141,9 @@ export const AIPSBreakdown: React.FC<AIPSBreakdownProps> = (props) => {
             margin: 0,
             lineHeight: '1.5',
           }}>
-{`AIPS = (0.35 × Loss)
-     + (0.25 × Anomaly)
-     + (0.40 × Recovery)
-     - (0.10 × Complexity)`}
+{`AIPS = 0.30 × Loss_Magnitude + 0.25 × Anomaly_Severity
+     + 0.35 × Recovery_Opportunity − 0.10 × Intervention_Complexity
+(score = clip(raw / 30 ×100, 0, 100) — backend is single source of truth)`}
           </pre>
         </div>
       </div>
@@ -208,7 +207,7 @@ export const AIPSBreakdown: React.FC<AIPSBreakdownProps> = (props) => {
               color: '#B8B3A8',
               fontSize: '11px',
             }}>
-              Weight: 35% | Contribution: {(0.35 * Math.min(100, props.loss_magnitude / 18 * 100)).toFixed(1)}
+              Weight: 30% | Contribution: {(0.30 * props.loss_magnitude).toFixed(1)}
             </div>
           </div>
 
@@ -300,7 +299,7 @@ export const AIPSBreakdown: React.FC<AIPSBreakdownProps> = (props) => {
               color: '#B8B3A8',
               fontSize: '11px',
             }}>
-              Weight: 40% | Contribution: {(0.40 * Math.min(100, props.recovery_opportunity / 15 * 100)).toFixed(1)}
+              Weight: 35% | Contribution: {(0.35 * props.recovery_opportunity).toFixed(1)}
             </div>
           </div>
 
