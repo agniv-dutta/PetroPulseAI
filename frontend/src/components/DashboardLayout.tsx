@@ -12,16 +12,12 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
 
   return (
     <div className="min-h-screen bg-dark-bg text-text-primary font-sans flex">
-      {/* Sidebar Navigation */}
       <Sidebar isOpen={sidebarOpen} setIsOpen={setSidebarOpen} />
 
-      {/* Main Layout Container */}
-      <div className="flex-1 flex flex-col min-h-screen lg:pl-64">
-        {/* Top Status Bar */}
+      <div className="flex-1 flex flex-col min-h-screen lg:pl-56">
         <SystemStatusBar />
 
-        {/* Dynamic Page Content */}
-        <main className="flex-1 p-4 md:p-6 lg:p-8 max-w-[1600px] w-full mx-auto">
+        <main className="flex-1 p-3 md:p-4 lg:p-5 max-w-[1520px] w-full mx-auto">
           <Breadcrumbs />
           {children}
         </main>

@@ -3,29 +3,29 @@ import { Link, useLocation } from 'react-router-dom';
 import { ChevronRight } from 'lucide-react';
 
 const CRUMB_LABELS: Record<string, string> = {
-  '/dashboard': 'Dashboard',
-  '/assets/leaderboard': 'Asset Leaderboard',
+  '/dashboard': 'Command Center',
+  '/assets/leaderboard': 'Leaderboard',
   '/assets/detail': 'Asset Detail',
-  '/intelligence/forecasting': 'Production Forecasting',
+  '/intelligence/forecasting': 'Forecasting',
   '/intelligence/forecast-details': 'Forecast Details',
   '/intelligence/anomaly-detection': 'Anomaly Detection',
   '/intelligence/deviation-attribution': 'Deviation Attribution',
-  '/intelligence/root-cause': 'Root Cause Analysis',
-  '/intelligence/priority': 'Intervention Priority',
+  '/intelligence/root-cause': 'Root Cause',
+  '/intelligence/priority': 'Intervention',
   '/scenarios/recovery-what-if': 'Recovery What-If',
-  '/scenarios/simulation': 'Real-Time Simulation',
+  '/scenarios/simulation': 'Simulation',
   '/scenarios/injection': 'Scenario Injection',
-  '/system/model-status': 'AI Model Status',
-  '/system/provenance': 'Data Provenance',
-  '/data-provenance': 'Data Provenance',
-  '/system/help': 'Help & Glossary',
+  '/system/model-status': 'Model Status',
+  '/system/provenance': 'Provenance',
+  '/data-provenance': 'Provenance',
+  '/system/help': 'Glossary',
 };
 
 const CATEGORY_LABELS: Record<string, string> = {
-  assets: 'Assets',
-  intelligence: 'Intelligence',
-  scenarios: 'Scenarios',
-  system: 'System',
+  assets: 'ASSETS',
+  intelligence: 'INTEL',
+  scenarios: 'SCENARIOS',
+  system: 'SYSTEM',
 };
 
 interface Crumb {
@@ -39,7 +39,7 @@ export const Breadcrumbs: React.FC = () => {
 
   if (parts.length === 0 || pathname === '/') return null;
 
-  const crumbs: Crumb[] = [{ label: 'Home', to: '/' }];
+  const crumbs: Crumb[] = [{ label: 'HOME', to: '/' }];
 
   const isAssetDetail = parts[0] === 'assets' && parts[1] === 'detail' && parts.length >= 3;
 
@@ -58,18 +58,18 @@ export const Breadcrumbs: React.FC = () => {
   }
 
   return (
-    <nav aria-label="Breadcrumb" className="mb-4 flex items-center gap-1.5 text-xs text-text-secondary">
+    <nav aria-label="Breadcrumb" className="mb-2 flex items-center gap-1 text-[10px] font-mono text-text-dim tracking-wider">
       {crumbs.map((crumb, idx) => {
         const isLast = idx === crumbs.length - 1;
         return (
           <React.Fragment key={idx}>
-            {idx > 0 && <ChevronRight size={12} className="text-dark-border shrink-0" />}
+            {idx > 0 && <ChevronRight size={10} className="text-dark-border shrink-0" />}
             {crumb.to && !isLast ? (
-              <Link to={crumb.to} className="hover:text-accent-amber transition">
+              <Link to={crumb.to} className="hover:text-accent-amber transition uppercase">
                 {crumb.label}
               </Link>
             ) : (
-              <span className={isLast ? 'text-text-primary font-medium' : ''}>{crumb.label}</span>
+              <span className={isLast ? 'text-text-secondary font-semibold uppercase' : 'uppercase'}>{crumb.label}</span>
             )}
           </React.Fragment>
         );
