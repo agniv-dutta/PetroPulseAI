@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { mockModels, mockDataIngestionLog } from '../data/mockData';
+import { mockDataIngestionLog } from '../data/mockData';
 import { 
   ShieldCheck, 
   Settings, 
@@ -11,12 +11,32 @@ import {
 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { metricsApi } from '../api/metrics';
-import type { ForecastMetricsResponse } from '../api/types';
+import { client } from '../api/client';
+import type { ForecastMetricsResponse, ModelVersionInfo } from '../api/types';
+
+interface ModelCard extends ModelCardDisplay {
+  mae: string;
+  r2: string;
+}
+
+interface ModelCardDisplay {
+  id: string;
+  name: string;
+  algorithm: string;
+  version: string;
+  status: string;
+  modelType: string;
+  task: string;
+  lastRun: string;
+  features: string[];
+  limitations: string | null;
+}
 
 export const ModelStatus: React.FC = () => {
   const [retrainingModule, setRetrainingModule] = useState<string | null>(null);
   const [retrainSuccess, setRetrainSuccess] = useState<string | null>(null);
   const [forecastMetrics, setForecastMetrics] = useState<ForecastMetricsResponse | null>(null);
+  const [models, setModels] = useState<ModelCard[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -24,11 +44,29 @@ export const ModelStatus: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const [forecast] = await Promise.all([
+      const [forecast, modelsResp] = await Promise.all([
         metricsApi.getForecastMetrics('90d'),
-        metricsApi.getAnomalyMetrics(),
+        client.models(),
       ]);
       setForecastMetrics(forecast);
+      if (modelsResp?.rows) {
+        setModels(
+          modelsResp.rows.map((m: ModelVersionInfo) => ({
+            id: m.id,
+            name: m.name,
+            algorithm: m.algorithm,
+            version: m.version,
+            status: m.status,
+            modelType: m.modelType,
+            task: m.task,
+            lastRun: m.trainingDate || m.registeredAt,
+            features: m.features,
+            limitations: m.limitations,
+            mae: m.metrics?.mae != null ? String(m.metrics.mae) : '—',
+            r2: m.metrics?.r_squared != null ? String(m.metrics.r_squared) : '—',
+          }))
+        );
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load metrics');
     } finally {
@@ -170,7 +208,7 @@ export const ModelStatus: React.FC = () => {
           <h3 className="text-sm font-bold text-text-primary uppercase tracking-wider">
             Active Core AI Modules
           </h3>
-          <span className="text-[10px] text-text-secondary font-mono">STATUS: 4/4 ACTIVE</span>
+          <span className="text-[10px] text-text-secondary font-mono">STATUS: {models.length}/{models.length} ACTIVE</span>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -183,6 +221,9 @@ export const ModelStatus: React.FC = () => {
                   <div>
                     <span className="text-[9px] text-text-secondary font-mono block">{model.id}</span>
                     <h4 className="text-sm font-bold text-text-primary uppercase tracking-wide mt-0.5">{model.name}</h4>
+                    <span className="inline-block mt-1 px-1.5 py-0.5 rounded text-[8px] font-bold font-mono bg-accent-amber bg-opacity-10 text-accent-amber border border-accent-amber border-opacity-35">
+                      {model.version}
+                    </span>
                   </div>
                   <span className="px-1.5 py-0.5 rounded text-[8px] font-bold font-mono bg-accent-green bg-opacity-10 text-accent-green border border-accent-green border-opacity-35">
                     {model.status}
@@ -191,6 +232,7 @@ export const ModelStatus: React.FC = () => {
                 
                 <div className="text-xs font-mono text-text-secondary">
                   <div>Model: <span className="text-text-primary">{model.algorithm}</span></div>
+                  <div className="mt-1">Task: <span className="text-text-primary">{model.task}</span></div>
                   <div className="mt-1">Last Sync: <span className="text-text-primary">{model.lastRun}</span></div>
                 </div>
               </div>

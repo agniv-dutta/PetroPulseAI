@@ -10,6 +10,7 @@ export interface AnomalyMetrics {
 
 export interface AnomalyMetricsPanelProps {
   model_name: string;
+  model_version?: string;
   metrics: AnomalyMetrics;
   threshold: number;
   tested_on_samples: number;
@@ -94,6 +95,7 @@ const caveatStyle: React.CSSProperties = {
 export function AnomalyMetricsPanel(props: AnomalyMetricsPanelProps) {
   const {
     model_name,
+    model_version,
     metrics: { precision, recall, f1_score, false_positive_rate, roc_auc },
     threshold,
     tested_on_samples,
@@ -116,7 +118,25 @@ export function AnomalyMetricsPanel(props: AnomalyMetricsPanelProps) {
   return (
     <div style={containerStyle}>
       <div style={titleStyle}>Anomaly Detection Model Performance</div>
-      <div style={modelNameStyle}>{model_name}</div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
+        <div style={modelNameStyle}>{model_name}</div>
+        {model_version && (
+          <span
+            style={{
+              fontSize: '10px',
+              fontWeight: 600,
+              color: '#FF9000',
+              background: 'rgba(255,144,0,0.12)',
+              border: '1px solid rgba(255,144,0,0.3)',
+              borderRadius: '4px',
+              padding: '1px 6px',
+              letterSpacing: '0.3px',
+            }}
+          >
+            {model_version}
+          </span>
+        )}
+      </div>
       <div style={thresholdStyle}>
         {'Anomaly Score > '}{threshold.toFixed(2)}{' triggers alert'}
       </div>

@@ -215,6 +215,33 @@ export interface AnomalyMetricsResponse {
   true_negatives: number
 }
 
+// Model Version Response
+export interface ModelVersionInfo {
+  id: string
+  name: string
+  modelType: string
+  version: string
+  task: string
+  algorithm: string
+  status: string
+  features: string[]
+  metrics: Record<string, number>
+  limitations: string | null
+  trainingDataset: string | null
+  trainingDate: string | null
+  registeredAt: string
+  notes: string | null
+}
+
+export interface ModelVersionsResponse {
+  rows: ModelVersionInfo[]
+  count: number
+}
+
+export interface ModelDetailResponse extends ModelVersionInfo {
+  validation: { valid: boolean; reason: string }
+}
+
 // Request types
 export interface SimulationStartRequest {
   asset_id: string

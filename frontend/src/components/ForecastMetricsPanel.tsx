@@ -11,6 +11,7 @@ export interface ForecastMetrics {
 
 export interface ForecastMetricsPanelProps {
   model_name: string;
+  model_version?: string;
   metrics_30d: ForecastMetrics;
   metrics_90d: ForecastMetrics;
   metrics_180d: ForecastMetrics;
@@ -57,8 +58,26 @@ export function ForecastMetricsPanel(props: ForecastMetricsPanelProps) {
       <div style={{ fontSize: '16px', fontWeight: 600, color: '#F3EFE4' }}>
         Production Forecasting Model Performance
       </div>
-      <div style={{ fontSize: '12px', color: '#B8B3A8', marginTop: '4px' }}>
-        {props.model_name}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
+        <div style={{ fontSize: '12px', color: '#B8B3A8' }}>
+          {props.model_name}
+        </div>
+        {props.model_version && (
+          <span
+            style={{
+              fontSize: '10px',
+              fontWeight: 600,
+              color: '#FF9000',
+              background: 'rgba(255,144,0,0.12)',
+              border: '1px solid rgba(255,144,0,0.3)',
+              borderRadius: '4px',
+              padding: '1px 6px',
+              letterSpacing: '0.3px',
+            }}
+          >
+            {props.model_version}
+          </span>
+        )}
       </div>
       <div style={{ fontSize: '11px', color: '#B8B3A8', marginTop: '4px' }}>
         {props.validation_method}

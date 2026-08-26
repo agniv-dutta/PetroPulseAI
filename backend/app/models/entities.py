@@ -305,11 +305,18 @@ class ModelVersion(Base):
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=_uuid)
     code: Mapped[str] = mapped_column(String(24), nullable=False)  # registry handle e.g. MOD-01
     model_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    model_type: Mapped[str] = mapped_column(String(40), nullable=False, default="ensemble")
     version: Mapped[str] = mapped_column(String(32), nullable=False, default="v1")
+    training_dataset: Mapped[str | None] = mapped_column(String(200))
+    training_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    features: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    metrics: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    artifact_path: Mapped[str | None] = mapped_column(String(512))
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="ACTIVE")
     task: Mapped[str | None] = mapped_column(String(80))
     algorithm: Mapped[str | None] = mapped_column(String(120))
     hyperparameters: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
-    status: Mapped[str] = mapped_column(String(24), nullable=False, default="READY")
+    limitations: Mapped[str | None] = mapped_column(Text)
     registered_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow
     )

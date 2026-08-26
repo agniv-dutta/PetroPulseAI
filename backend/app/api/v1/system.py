@@ -1,6 +1,5 @@
 """Data-source catalogue, model registry, portfolio summary and simulation control."""
 
-import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -11,11 +10,12 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.intelligence.pipeline import get_portfolio_analysis
 from app.models import DataSource, ModelVersion, ProductionHistory
+from app.services.model_registry import get_model_registry
 
 router = APIRouter(tags=["system"])
 
 
-
+# ---------------------------------------------------------------- provenance
 @router.get("/provenance/sources")
 def provenance_sources(db: Session = Depends(get_db)) -> dict:
     rows = db.execute(select(DataSource).order_by(DataSource.source_name)).scalars().all()
@@ -41,23 +41,64 @@ def provenance_sources(db: Session = Depends(get_db)) -> dict:
     }
 
 
+# ---------------------------------------------------------------- model registry
 @router.get("/models")
 def list_models(db: Session = Depends(get_db)) -> dict:
-    rows = db.execute(select(ModelVersion).order_by(ModelVersion.code)).scalars().all()
+    """List all registered model versions with status, metrics, and features."""
+    registry = get_model_registry()
+    if not registry.loaded:
+        registry.load_from_db(db)
+    infos = registry.get_versions()
     return {
         "rows": [
             {
-                "id": m.code,
-                "name": m.model_name,
-                "version": m.version,
-                "task": m.task,
-                "algorithm": m.algorithm,
-                "registeredAt": m.registered_at.isoformat(),
-                "metrics": m.hyperparameters,
-                "status": m.status,
+                "id": info.code,
+                "name": info.model_name,
+                "modelType": info.model_type,
+                "version": info.version,
+                "task": info.task,
+                "algorithm": info.algorithm,
+                "status": info.status,
+                "features": info.features,
+                "metrics": info.metrics,
+                "limitations": info.limitations,
+                "trainingDataset": info.training_dataset,
+                "trainingDate": info.training_date,
+                "registeredAt": info.registered_at,
+                "notes": info.notes,
             }
-            for m in rows
-        ]
+            for info in infos
+        ],
+        "count": len(infos),
+    }
+
+
+@router.get("/models/{model_id}")
+def get_model(model_id: str, db: Session = Depends(get_db)) -> dict:
+    """Get a single model version with validation status."""
+    registry = get_model_registry()
+    if not registry.loaded:
+        registry.load_from_db(db)
+    info = registry.get_version(model_id)
+    if info is None:
+        raise HTTPException(404, f"unknown model {model_id}")
+    validation = registry.validate_model(model_id)
+    return {
+        "id": info.code,
+        "name": info.model_name,
+        "modelType": info.model_type,
+        "version": info.version,
+        "task": info.task,
+        "algorithm": info.algorithm,
+        "status": info.status,
+        "features": info.features,
+        "metrics": info.metrics,
+        "limitations": info.limitations,
+        "trainingDataset": info.training_dataset,
+        "trainingDate": info.training_date,
+        "registeredAt": info.registered_at,
+        "notes": info.notes,
+        "validation": validation,
     }
 
 
@@ -81,7 +122,7 @@ def retrain_model(model_id: str, payload: RetrainRequest, db: Session = Depends(
     finally:
         db_session.close()
     entry.registered_at = datetime.now(timezone.utc)
-    entry.status = "READY"
+    entry.status = "ACTIVE"
     db.commit()
     return {
         "model_id": model_id,
@@ -91,6 +132,7 @@ def retrain_model(model_id: str, payload: RetrainRequest, db: Session = Depends(
     }
 
 
+# ---------------------------------------------------------------- portfolio summary
 @router.get("/portfolio/summary")
 def portfolio_summary(db: Session = Depends(get_db)) -> dict:
     ranked = get_portfolio_analysis(db)

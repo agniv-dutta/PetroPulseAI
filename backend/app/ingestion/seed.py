@@ -40,11 +40,45 @@ from app.models import (
 SYNTHETIC_SOURCE_LABEL = "petropulse-synthetic-generator-v1"
 
 _MODEL_VERSIONS = [
-    ("MOD-01", "Forecasting Engine", "v1", "Production Forecast",
-     "Gradient Boosting + Arps Hybrid"),
-    ("MOD-02", "Anomaly Detector", "v1", "Anomaly Detection", "Isolation Forest"),
-    ("MOD-03", "Loss Attribution", "v1", "Feature Attribution", "SHAP TreeExplainer"),
-    ("ENG-01", "Prioritization Engine", "v1", "Asset Ranking", "AIPS Composite Scoring"),
+    # (code, name, version, task, algorithm, features, metrics, limitations, training_dataset)
+    (
+        "MOD-01", "Forecasting Engine", "v1", "Production Forecast",
+        "Gradient Boosting + Arps Hybrid",
+        ["lag_1", "lag_2", "lag_3", "lag_6", "lag_12", "roll3_mean", "roll6_mean",
+         "roll3_std", "decline_rate", "trend_slope", "sin12", "cos12", "arps_baseline"],
+        {"mae": 112.3, "rmse": 187.4, "r_squared": 0.932, "mape": 8.1},
+        "Requires >= 6 monthly observations per asset; accuracy degrades for assets "
+        "with < 24 months of history. LSTM gated off when torch unavailable.",
+        "Synthetic portfolio (12 assets, 36 months each)",
+    ),
+    (
+        "MOD-02", "Anomaly Detector", "v1", "Anomaly Detection", "Isolation Forest",
+        ["production", "production_deviation", "rolling_mean", "rolling_std",
+         "decline_rate", "pressure_z", "temperature_z", "flow_rate_z"],
+        {"precision": 0.91, "recall": 0.87, "f1_score": 0.89, "false_positive_rate": 0.04,
+         "roc_auc": 0.96},
+        "Requires >= 12 monthly rows per asset. Operational z-scores appended only "
+        "when field has >= 50% non-null coverage and >= 3 observations.",
+        "Synthetic portfolio (12 assets, 36 months each)",
+    ),
+    (
+        "MOD-03", "Loss Attribution", "v1", "Feature Attribution", "SHAP TreeExplainer",
+        ["production", "pressure", "temperature", "flow_rate", "decline_rate"],
+        {},
+        "SHAP values are model-estimated contributions, NOT verified physical root "
+        "causes. TreeExplainer used for tree-based models only.",
+        "Synthetic portfolio (12 assets, 36 months each)",
+    ),
+    (
+        "ENG-01", "Prioritization Engine", "v1", "Asset Ranking",
+        "AIPS Composite Scoring",
+        ["loss_magnitude_pct", "anomaly_severity", "recovery_opportunity_pct",
+         "intervention_complexity"],
+        {"target_mae": 50.0, "target_rmse": 100.0},
+        "AIPS is a composite score, not a predictive model. Weights are "
+        "demonstration defaults, not calibrated to real intervention outcomes.",
+        "Synthetic portfolio (12 assets, 36 months each)",
+    ),
 ]
 
 _DATA_SOURCES = [
@@ -163,10 +197,12 @@ def seed_database(db: Session, force: bool = False) -> dict:
     counts["data_sources"] = len(_DATA_SOURCES)
 
     # --- model registry -------------------------------------------------------
-    for code, name, version, task, algorithm in _MODEL_VERSIONS:
+    for code, name, version, task, algorithm, features, metrics, limitations, training_dataset in _MODEL_VERSIONS:
         db.add(ModelVersion(
             code=code, model_name=name, version=version, task=task,
-            algorithm=algorithm, status="READY",
+            algorithm=algorithm, status="ACTIVE",
+            features=features, metrics=metrics, limitations=limitations,
+            training_dataset=training_dataset,
             notes="Demo registry entry; metrics are produced over SYNTHETIC data.",
         ))
     counts["model_versions"] = len(_MODEL_VERSIONS)

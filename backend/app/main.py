@@ -42,6 +42,10 @@ async def lifespan(app: FastAPI):
         if settings.warm_cache_on_startup:
             warmed = warm_cache(db)
             logger.info("portfolio cache warmed for %d assets", warmed)
+        from app.services.model_registry import get_model_registry
+        registry = get_model_registry()
+        n_models = registry.load_from_db(db)
+        logger.info("model registry loaded %d model versions", n_models)
     finally:
         db.close()
     yield

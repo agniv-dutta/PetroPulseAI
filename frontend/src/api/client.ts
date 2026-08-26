@@ -230,13 +230,40 @@ export const api = {
       rows: Array<{
         id: string
         name: string
+        modelType: string
+        version: string
         task: string
         algorithm: string
-        trainedAt: string
-        metrics: Record<string, unknown>
         status: string
+        features: string[]
+        metrics: Record<string, number>
+        limitations: string | null
+        trainingDataset: string | null
+        trainingDate: string | null
+        registeredAt: string
+        notes: string | null
       }>
+      count: number
     }>('/models'),
+
+  modelDetail: (modelId: string) =>
+    get<{
+      id: string
+      name: string
+      modelType: string
+      version: string
+      task: string
+      algorithm: string
+      status: string
+      features: string[]
+      metrics: Record<string, number>
+      limitations: string | null
+      trainingDataset: string | null
+      trainingDate: string | null
+      registeredAt: string
+      notes: string | null
+      validation: { valid: boolean; reason: string }
+    }>(`/models/${modelId}`),
 
   retrainModel: (modelId: string) =>
     send<{ model_id: string; status: string }>(`/models/${modelId}/retrain`, 'POST', {}),
