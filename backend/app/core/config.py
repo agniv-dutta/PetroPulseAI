@@ -44,6 +44,10 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
     redis_enabled: bool = False
 
+    # Celery
+    celery_broker_url: str = "redis://localhost:6379/0"
+    celery_result_backend: str = "redis://localhost:6379/0"
+
     # Seeding
     seed_history_months: int = 36
     seed_random_seed: int = 42

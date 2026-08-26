@@ -64,6 +64,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Prometheus metrics (gracefully skipped if package not installed)
+try:
+    from prometheus_fastapi_instrumentator import Instrumentator
+
+    Instrumentator().instrument(app).expose(app, endpoint="/metrics")
+except ImportError:
+    pass
+
 # --------------------------------------------------------------------------
 # Routers
 # --------------------------------------------------------------------------

@@ -59,6 +59,85 @@ docker compose up --build
 # frontend: http://localhost:8080  |  backend: http://localhost:8000/docs
 ```
 
+## Running PetroPulse AI Locally
+
+One-command startup with Docker Compose brings up the full stack:
+PostgreSQL + TimescaleDB, Redis, FastAPI backend, Celery worker/beat,
+React frontend, Prometheus, and Grafana.
+
+### Quick Start
+
+```bash
+# 1. Clone and enter the repo
+git clone https://github.com/agniv-dutta/PetroPulseAI.git
+cd PetroPulseAI
+
+# 2. Create your .env (optional — defaults work out of the box)
+cp .env.example .env
+
+# 3. Start everything
+docker compose up --build
+```
+
+First build takes a few minutes. On subsequent starts it only rebuilds
+changed layers.
+
+### Service Endpoints
+
+| Service      | URL                          | Purpose                        |
+|--------------|------------------------------|--------------------------------|
+| Frontend     | http://localhost:8080         | React dashboard                |
+| Backend API  | http://localhost:8000/docs    | Swagger / OpenAPI docs         |
+| Backend Root | http://localhost:8000/health  | Liveness probe                 |
+| Prometheus   | http://localhost:9090         | Metrics explorer               |
+| Grafana      | http://localhost:3000         | Dashboards (admin/admin)       |
+| PostgreSQL   | localhost:5432               | DB (petropulse/petropulse)     |
+| Redis        | localhost:6379               | Cache / Celery broker          |
+
+### Verifying Health
+
+```bash
+# Backend liveness
+curl http://localhost:8000/health
+
+# Detailed health (DB + Redis status)
+curl http://localhost:8000/api/v1/health
+
+# Database
+docker compose exec postgres pg_isready -U petropulse
+
+# Redis
+docker compose exec redis redis-cli ping
+
+# Celery worker
+docker compose logs celery_worker | grep "ready"
+
+# Prometheus targets
+curl http://localhost:9090/api/v1/targets | grep health
+```
+
+### Simulation & WebSocket
+
+Start a simulation via the API and connect via WebSocket:
+
+```bash
+# Start a simulation
+curl -X POST http://localhost:8000/api/v1/simulation/start \
+  -H "Content-Type: application/json" \
+  -d '{"asset_id":"MH-07","scenario":"NORMAL","speed_multiplier":10.0}'
+
+# WebSocket connects at:
+# ws://localhost:8080/ws/simulation/{session_id}
+# (nginx proxies /ws/ to the backend automatically)
+```
+
+### Stopping
+
+```bash
+docker compose down          # stop containers (data persists)
+docker compose down -v       # stop and delete all volumes
+```
+
 ## Demo Flow
 
 1. **Command Center**: View portfolio health &amp; active anomalies
