@@ -111,18 +111,27 @@ describe('useSimulationSocket', () => {
     act(() => {
       MockWebSocket.instances[0].simulateMessage({
         type: 'telemetry',
-        data: {
-          tick: 1,
-          production_bbl_d: 4500,
-          expected_bbl_d: 5000,
-        },
+        timestamp: new Date().toISOString(),
+        asset_id: 'CB-08',
+        source_type: 'SYNTHETIC',
+        production: 4500,
+        pressure: 45.0,
+        temperature: 78.0,
+        flow_rate: 120.0,
+        forecast: 5000,
+        anomaly_score: 0.1,
+        severity: 'NORMAL',
+        aips_score: 30,
+        priority: 'LOW',
+        recovery_opportunity: 0.01,
+        confidence: 0.9,
       });
     });
 
     expect(result.current.ticks.length).toBe(1);
   });
 
-  it('caps ticks at 120', async () => {
+  it('caps ticks at 200', async () => {
     const { result } = renderHook(() => useSimulationSocket('CB-08'));
 
     await act(async () => {
@@ -133,16 +142,29 @@ describe('useSimulationSocket', () => {
       MockWebSocket.instances[0].simulateOpen();
     });
 
-    for (let i = 0; i < 130; i++) {
+    for (let i = 0; i < 210; i++) {
       act(() => {
         MockWebSocket.instances[0].simulateMessage({
           type: 'telemetry',
-          data: { tick: i, production_bbl_d: 4500 },
+          timestamp: new Date().toISOString(),
+          asset_id: 'CB-08',
+          source_type: 'SYNTHETIC',
+          production: 4500,
+          pressure: 45.0,
+          temperature: 78.0,
+          flow_rate: 120.0,
+          forecast: 5000,
+          anomaly_score: 0.1,
+          severity: 'NORMAL',
+          aips_score: 30,
+          priority: 'LOW',
+          recovery_opportunity: 0.01,
+          confidence: 0.9,
         });
       });
     }
 
-    expect(result.current.ticks.length).toBeLessThanOrEqual(120);
+    expect(result.current.ticks.length).toBeLessThanOrEqual(200);
   });
 
   it('setScenario sends SET_SCENARIO message', async () => {
