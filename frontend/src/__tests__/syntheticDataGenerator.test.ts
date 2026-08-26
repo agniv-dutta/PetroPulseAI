@@ -10,7 +10,7 @@ describe('syntheticDataGenerator utility', () => {
   });
 
   it('scenarios have required fields', () => {
-    for (const [key, scenario] of Object.entries(ANOMALY_SCENARIOS)) {
+    for (const [, scenario] of Object.entries(ANOMALY_SCENARIOS)) {
       expect(scenario).toHaveProperty('type');
       expect(scenario).toHaveProperty('start_offset_minutes');
       expect(scenario).toHaveProperty('duration_minutes');

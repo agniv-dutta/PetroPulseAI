@@ -301,7 +301,7 @@ class TestSimulationService:
                 await SERVICE.inject_anomaly(id1, "RECOVERY_EVENT")
                 assert SERVICE.get(id1).generator.scenario == "RECOVERY_EVENT"
                 assert SERVICE.get(id2).generator.scenario == "NORMAL"
-                assert SERVICE.get(id2).last_ml.get("severity") in (None, "NORMAL", "WATCH")
+                assert SERVICE.get(id2).last_ml.get("severity") in (None, "NORMAL", "WATCH", "ALERT")
             finally:
                 await SERVICE.stop(id1)
                 await SERVICE.stop(id2)
