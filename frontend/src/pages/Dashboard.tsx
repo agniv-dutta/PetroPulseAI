@@ -423,7 +423,7 @@ export const Dashboard: React.FC = () => {
       {/* ANOMALY MODAL */}
       {selectedAnomaly && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-dark-bg/85 backdrop-blur-sm animate-fade-in">
-          <div className="bg-dark-elevated border border-accent-red/30 w-[400px] p-4 shadow-2xl animate-slide-up">
+          <div className="bg-dark-elevated border border-accent-red/30 w-[420px] p-4 shadow-2xl animate-slide-up">
             <div className="flex items-center justify-between mb-3">
               <StatusPill label={`${selectedAnomaly.severity} ANOMALY`} color="red" pulse />
               <button onClick={() => setSelectedAnomaly(null)} className="text-text-dim hover:text-accent-red transition">
@@ -434,22 +434,36 @@ export const Dashboard: React.FC = () => {
               {selectedAnomaly.assetName}{' '}
               <span className="text-text-dim font-normal">({selectedAnomaly.id})</span>
             </h2>
-            <div className="space-y-1.5 text-[11px] font-mono text-text-secondary mb-4">
+            <div className="space-y-1.5 text-[11px] font-mono text-text-secondary mb-3">
               <div><span className="text-text-dim">TYPE:</span> {selectedAnomaly.category}</div>
               <div><span className="text-text-dim">SIGNAL:</span> {selectedAnomaly.type}</div>
               <div><span className="text-text-dim">DEV:</span> <span className="text-accent-red font-bold">{selectedAnomaly.deviation}%</span></div>
               <div><span className="text-text-dim">DETECTED:</span> {selectedAnomaly.time}</div>
             </div>
+
+            {/* Decision support teaser */}
+            <div className="bg-dark-surface border border-dark-border p-2.5 mb-3 text-[9px] font-mono text-text-dim leading-relaxed">
+              <span className="text-accent-amber font-bold">DECISION SUPPORT:</span>{' '}
+              Model-estimated root cause analysis and verification steps available in the full Decision Panel.
+              This is not a confirmed diagnosis.
+            </div>
+
             <div className="flex gap-2">
               <button
-                onClick={() => { setSelectedAnomaly(null); navigate('/intelligence/anomaly-detection'); }}
-                className="flex-1 bg-accent-red text-text-primary py-2 text-xs font-mono font-bold uppercase tracking-wider hover:bg-accent-red/90 transition"
+                onClick={() => { setSelectedAnomaly(null); navigate(`/assets/detail/${selectedAnomaly.id.split('-')[0]}-${selectedAnomaly.id.split('-')[1]}`); }}
+                className="flex-1 bg-accent-amber text-dark-bg py-2 text-xs font-mono font-bold uppercase tracking-wider hover:bg-accent-amber/90 transition flex items-center justify-center gap-1.5"
               >
-                Investigate
+                Decision Panel <ArrowRight size={12} />
+              </button>
+              <button
+                onClick={() => { setSelectedAnomaly(null); navigate('/intelligence/anomaly-detection'); }}
+                className="flex-1 border border-accent-red/50 text-accent-red py-2 text-xs font-mono font-bold uppercase tracking-wider hover:bg-accent-red/10 transition"
+              >
+                Full Analysis
               </button>
               <button
                 onClick={() => setSelectedAnomaly(null)}
-                className="px-4 py-2 bg-dark-surface border border-dark-border text-text-secondary text-xs font-mono font-bold uppercase tracking-wider hover:border-accent-amber/30 transition"
+                className="px-3 py-2 bg-dark-surface border border-dark-border text-text-secondary text-xs font-mono font-bold uppercase tracking-wider hover:border-accent-amber/30 transition"
               >
                 Dismiss
               </button>

@@ -28,6 +28,7 @@ import {
 import { RecoveryOpportunityCard } from '../components/RecoveryOpportunityCard';
 import { AIPSBreakdown } from '../components/AIPSBreakdown';
 import { SHAPExplanationCard } from '../components/SHAPExplanationCard';
+import { DecisionPanel } from '../components/DecisionPanel';
 import { ProvenanceBadge } from '../components/ProvenanceBadge';
 import { assetsApi } from '../api/assets';
 
@@ -661,6 +662,29 @@ export const AssetDetail: React.FC = () => {
       {/* TAB 3: EXPLAINABLE AI INSIGHTS */}
       {activeTab === 'ai' && (
         <div id="panel-ai" role="tabpanel" aria-label="Explainable AI Insights" style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+
+          {/* DECISION SUPPORT PANEL */}
+          <DecisionPanel
+            assetId={d.asset.id}
+            priority={d.aips.priority}
+            deviationPct={d.deviation_pct}
+            anomalyScore={d.anomaly_score}
+            aipsBreakdown={d.aips.breakdown}
+            recovery={{
+              estimated_recovery_mmbbl: d.recovery.estimated_recovery_mmbbl,
+              estimated_value_usd_m: d.recovery.estimated_value_usd_m,
+              combined_confidence: d.recovery.combined_confidence,
+            }}
+            contributions={d.attribution.contributions.map(c => ({
+              feature: c.feature,
+              label: c.label,
+              shap_value: c.shap_value,
+              direction: c.direction,
+              relative_contribution_pct: c.relative_contribution_pct,
+            }))}
+            recommendations={d.recommendations.recommendations}
+            anomalyWindows={d.anomaly_windows}
+          />
           
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(450px, 1fr))', gap: '24px' }}>
             
